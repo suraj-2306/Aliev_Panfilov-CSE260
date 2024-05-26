@@ -1,0 +1,4 @@
+*.o
+apf
+arch.gnu-c++11.generic
+*.txt
