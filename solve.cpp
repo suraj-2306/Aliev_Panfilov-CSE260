@@ -69,6 +69,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank); // Get the rank of the process
 
     double *E_prev_rank;
+    double *R_rank;
 
     int smallStride = (m + 2) / world_size;
     int bigStride = smallStride + 1;
@@ -103,9 +104,15 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
     MPI_Comm_create(MPI_COMM_WORLD, bigGrp, &big_comm);
 
     if (world_rank < numSmallRanks)
+    {
         E_prev_rank = (double *)malloc(sizeof(double) * smallStride * (n + 2));
+        R_rank = (double *)malloc(sizeof(double) * smallStride * (n + 2));
+    }
     else
+    {
         E_prev_rank = (double *)malloc(sizeof(double) * bigStride * (n + 2));
+        R_rank = (double *)malloc(sizeof(double) * bigStride * (n + 2));
+    }
 
     for (niter = 0; niter < cb.niters; niter++)
     {
@@ -163,20 +170,30 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
         //////////////////////////////////////////////////////////////////////////////
 
         if (world_rank < numSmallRanks)
+        {
             MPI_Scatter(E_prev, (n + 2) * smallStride, MPI_DOUBLE,
                         E_prev_rank, (n + 2) * smallStride, MPI_DOUBLE, 0,
                         small_comm);
+            MPI_Scatter(R, (n + 2) * smallStride, MPI_DOUBLE,
+                        R_rank, (n + 2) * smallStride, MPI_DOUBLE, 0,
+                        small_comm);
+        }
 
         else
+        {
             MPI_Scatter((E_prev + numSmallRanks * (n + 2) * smallStride), (n + 2) * bigStride, MPI_DOUBLE,
                         E_prev_rank, (n + 2) * bigStride, MPI_DOUBLE, 0,
                         big_comm);
+            MPI_Scatter((R + numSmallRanks * (n + 2) * smallStride), (n + 2) * bigStride, MPI_DOUBLE,
+                        R_rank, (n + 2) * bigStride, MPI_DOUBLE, 0,
+                        big_comm);
+        }
 
-            // printf("Process %d ", world_rank);
-            // if (world_rank < numSmallRanks)
-            //     printMatNaive("E_prev_rank_small", E_prev_rank, smallStride, n + 2);
-            // else
-            //     printMatNaive("E_prev_rank_big", E_prev_rank, bigStride, n + 2);
+        // printf("Process %d ", world_rank);
+        // if (world_rank < numSmallRanks)
+        //     printMatNaive("E_prev_rank_small", E_prev_rank, smallStride, n + 2);
+        // else
+        //     printMatNaive("E_prev_rank_big", E_prev_rank, bigStride, n + 2);
 
 #define FUSED 1
 
