@@ -65,12 +65,47 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
 
     int world_size;
     int world_rank;
-    double *E_prev_rank;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size); // Get the number of processes
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank); // Get the rank of the process
 
-    int stride = (m + 2) / world_size; // Number of rows per core
-    E_prev_rank = (double *)malloc(sizeof(double) * stride * (n + 2));
+    double *E_prev_rank;
+
+    int smallStride = (m + 2) / world_size;
+    int bigStride = smallStride + 1;
+    int numBigRanks = (m + 2) % world_size;
+    int numSmallRanks = world_size - numBigRanks;
+    int *SmallRanks = (int *)malloc(sizeof(int) * (numSmallRanks));
+    int *BigRanks = (int *)malloc(sizeof(int) * (numBigRanks));
+    int i, j;
+
+    for (i = 0; i < numSmallRanks; i++)
+    {
+        SmallRanks[i] = i;
+    }
+
+    for (i = 0; i < numBigRanks; i++)
+    {
+        BigRanks[i] = i + numSmallRanks;
+    }
+
+    MPI_Group world_group;
+    MPI_Group smallGrp;
+    MPI_Group bigGrp;
+    MPI_Comm small_comm;
+    MPI_Comm big_comm;
+
+    MPI_Comm_group(MPI_COMM_WORLD, &world_group);
+
+    MPI_Group_incl(world_group, numSmallRanks, SmallRanks, &smallGrp);
+    MPI_Comm_create(MPI_COMM_WORLD, smallGrp, &small_comm);
+
+    MPI_Group_incl(world_group, numBigRanks, BigRanks, &bigGrp);
+    MPI_Comm_create(MPI_COMM_WORLD, bigGrp, &big_comm);
+
+    if (world_rank < numSmallRanks)
+        E_prev_rank = (double *)malloc(sizeof(double) * smallStride * (n + 2));
+    else
+        E_prev_rank = (double *)malloc(sizeof(double) * bigStride * (n + 2));
 
     for (niter = 0; niter < cb.niters; niter++)
     {
@@ -99,44 +134,49 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
 
         // 4 FOR LOOPS set up the padding needed for the boundary conditions
 
-        int i, j;
-
         if (world_rank == 0)
         {
-            printf("Stride = %d\n", stride);
-
             // Fills in the TOP Ghost Cells
-            // for (i = 0; i < (n + 2); i++)
-            // {
-            //     E_prev[i] = E_prev[i + (n + 2) * 2];
-            // }
+            for (i = 0; i < (n + 2); i++)
+            {
+                E_prev[i] = E_prev[i + (n + 2) * 2];
+            }
 
-            // // Fills in the RIGHT Ghost Cells
-            // for (i = (n + 1); i < (m + 2) * (n + 2); i += (n + 2))
-            // {
-            //     E_prev[i] = E_prev[i - 2];
-            // }
+            // Fills in the RIGHT Ghost Cells
+            for (i = (n + 1); i < (m + 2) * (n + 2); i += (n + 2))
+            {
+                E_prev[i] = E_prev[i - 2];
+            }
 
-            // // Fills in the LEFT Ghost Cells
-            // for (i = 0; i < (m + 2) * (n + 2); i += (n + 2))
-            // {
-            //     E_prev[i] = E_prev[i + 2];
-            // }
+            // Fills in the LEFT Ghost Cells
+            for (i = 0; i < (m + 2) * (n + 2); i += (n + 2))
+            {
+                E_prev[i] = E_prev[i + 2];
+            }
 
-            // // Fills in the BOTTOM Ghost Cells
-            // for (i = ((m + 2) * (n + 2) - (n + 2)); i < (m + 2) * (n + 2); i++)
-            // {
-            //     E_prev[i] = E_prev[i - (n + 2) * 2];
-            // }
+            // Fills in the BOTTOM Ghost Cells
+            for (i = ((m + 2) * (n + 2) - (n + 2)); i < (m + 2) * (n + 2); i++)
+            {
+                E_prev[i] = E_prev[i - (n + 2) * 2];
+            }
         }
         //////////////////////////////////////////////////////////////////////////////
 
-        MPI_Scatter(E_prev, (n + 2) * stride, MPI_DOUBLE,
-                    E_prev_rank, (n + 2) * stride, MPI_DOUBLE, 0,
-                    MPI_COMM_WORLD);
+        if (world_rank < numSmallRanks)
+            MPI_Scatter(E_prev, (n + 2) * smallStride, MPI_DOUBLE,
+                        E_prev_rank, (n + 2) * smallStride, MPI_DOUBLE, 0,
+                        small_comm);
 
-        printf("Process %d ", world_rank);
-        printMatNaive("E_prev_rank", E_prev_rank, stride, n + 2);
+        else
+            MPI_Scatter((E_prev + numSmallRanks * (n + 2) * smallStride), (n + 2) * bigStride, MPI_DOUBLE,
+                        E_prev_rank, (n + 2) * bigStride, MPI_DOUBLE, 0,
+                        big_comm);
+
+            // printf("Process %d ", world_rank);
+            // if (world_rank < numSmallRanks)
+            //     printMatNaive("E_prev_rank_small", E_prev_rank, smallStride, n + 2);
+            // else
+            //     printMatNaive("E_prev_rank_big", E_prev_rank, bigStride, n + 2);
 
 #define FUSED 1
 

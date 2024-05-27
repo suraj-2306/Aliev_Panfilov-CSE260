@@ -32,19 +32,19 @@ void init(double *E, double *E_prev, double *R, int m, int n)
     for (i = 0; i < (m + 2) * (n + 2); i++)
     {
         R[i] = 0;
-        E_prev[i] = i;
+        E_prev[i] = 0;
     }
 
-    // for (i = (n + 2); i < (m + 1) * (n + 2); i++)
-    // {
-    //     int colIndex = i % (n + 2); // gives the base index (first row's) of the current index
+    for (i = (n + 2); i < (m + 1) * (n + 2); i++)
+    {
+        int colIndex = i % (n + 2); // gives the base index (first row's) of the current index
 
-    //     // Need to compute (n+1)/2 rather than n/2 to work with odd numbers
-    //     if (colIndex == 0 || colIndex == (n + 1) || colIndex < ((n + 1) / 2 + 1))
-    //         continue;
+        // Need to compute (n+1)/2 rather than n/2 to work with odd numbers
+        if (colIndex == 0 || colIndex == (n + 1) || colIndex < ((n + 1) / 2 + 1))
+            continue;
 
-    //     E_prev[i] = 1.0;
-    // }
+        E_prev[i] = 1.0;
+    }
 
     for (i = 0; i < (m + 2) * (n + 2); i++)
     {
