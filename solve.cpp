@@ -122,6 +122,27 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
     topRow_rank = (double *)malloc(sizeof(double) * (n + 2));
     bottomRow_rank = (double *)malloc(sizeof(double) * (n + 2));
 
+    // Scatter initial condition to all processes. Try to move outside loop.
+    if (world_rank < numSmallRanks)
+    {
+        MPI_Scatter(E_prev, (n + 2) * smallStride, MPI_DOUBLE,
+                    E_prev_rank + (n + 2), (n + 2) * smallStride, MPI_DOUBLE, 0,
+                    small_comm);
+        MPI_Scatter(R, (n + 2) * smallStride, MPI_DOUBLE,
+                    R_rank + (n + 2), (n + 2) * smallStride, MPI_DOUBLE, 0,
+                    small_comm);
+    }
+
+    else
+    {
+        MPI_Scatter((E_prev + numSmallRanks * (n + 2) * smallStride), (n + 2) * bigStride, MPI_DOUBLE,
+                    E_prev_rank + (n + 2), (n + 2) * bigStride, MPI_DOUBLE, 0,
+                    big_comm);
+        MPI_Scatter((R + numSmallRanks * (n + 2) * smallStride), (n + 2) * bigStride, MPI_DOUBLE,
+                    R_rank + (n + 2), (n + 2) * bigStride, MPI_DOUBLE, 0,
+                    big_comm);
+    }
+
     for (niter = 0; niter < cb.niters; niter++)
     {
 
@@ -134,73 +155,40 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
                 plotter->updatePlot(E, -1, m + 1, n + 1);
         }
 
-        /*
-         * Copy data from boundary of the computational box to the
-         * padding region, set up for differencing computational box's boundary
-         *
-         * These are physical boundary conditions, and are not to be confused
-         * with ghost cells that we would use in an MPI implementation
-         *
-         * The reason why we copy boundary conditions is to avoid
-         * computing single sided differences at the boundaries
-         * which increase the running time of solve()
-         *
-         */
+        int stride_rank = (world_rank < numSmallRanks) ? smallStride : bigStride;
 
-        // 4 FOR LOOPS set up the padding needed for the boundary conditions
-
+        // Update physical borders
         if (world_rank == 0)
         {
             // Fills in the TOP Ghost Cells
-            for (i = 0; i < (n + 2); i++)
+            for (i = (n + 2); i < 2 * (n + 2); i++)
             {
-                E_prev[i] = E_prev[i + (n + 2) * 2];
+                E_prev_rank[i] = E_prev_rank[i + (n + 2) * 2];
             }
+        }
 
-            // Fills in the RIGHT Ghost Cells
-            for (i = (n + 1); i < (m + 2) * (n + 2); i += (n + 2))
-            {
-                E_prev[i] = E_prev[i - 2];
-            }
-
-            // Fills in the LEFT Ghost Cells
-            for (i = 0; i < (m + 2) * (n + 2); i += (n + 2))
-            {
-                E_prev[i] = E_prev[i + 2];
-            }
-
+        else if (world_rank == world_size - 1)
+        {
             // Fills in the BOTTOM Ghost Cells
-            for (i = ((m + 2) * (n + 2) - (n + 2)); i < (m + 2) * (n + 2); i++)
+            for (i = (stride_rank * (n + 2)); i < (stride_rank + 1) * (n + 2); i++)
             {
-                E_prev[i] = E_prev[i - (n + 2) * 2];
+                E_prev_rank[i] = E_prev_rank[i - (n + 2) * 2];
             }
         }
-        //////////////////////////////////////////////////////////////////////////////
 
-        // Scatter initial condition to all processes. Try to move outside loop.
-        if (world_rank < numSmallRanks)
+        // Fills in the RIGHT Ghost Cells
+        for (i = 2 * (n + 2) - 1; i < (stride_rank + 2) * (n + 2); i += (n + 2))
         {
-            MPI_Scatter(E_prev, (n + 2) * smallStride, MPI_DOUBLE,
-                        E_prev_rank + (n + 2), (n + 2) * smallStride, MPI_DOUBLE, 0,
-                        small_comm);
-            MPI_Scatter(R, (n + 2) * smallStride, MPI_DOUBLE,
-                        R_rank + (n + 2), (n + 2) * smallStride, MPI_DOUBLE, 0,
-                        small_comm);
+            E_prev_rank[i] = E_prev_rank[i - 2];
         }
 
-        else
+        // Fills in the LEFT Ghost Cells
+        for (i = (n + 2); i < (stride_rank + 2) * (n + 2); i += (n + 2))
         {
-            MPI_Scatter((E_prev + numSmallRanks * (n + 2) * smallStride), (n + 2) * bigStride, MPI_DOUBLE,
-                        E_prev_rank + (n + 2), (n + 2) * bigStride, MPI_DOUBLE, 0,
-                        big_comm);
-            MPI_Scatter((R + numSmallRanks * (n + 2) * smallStride), (n + 2) * bigStride, MPI_DOUBLE,
-                        R_rank + (n + 2), (n + 2) * bigStride, MPI_DOUBLE, 0,
-                        big_comm);
+            E_prev_rank[i] = E_prev_rank[i + 2];
         }
 
         // Buffer my ghost cells
-        int stride_rank = (world_rank < numSmallRanks) ? smallStride : bigStride;
-
         for (i = 0; i < (n + 2); i++)
         {
             topRow_rank[i] = E_prev_rank[i + (n + 2)];                  // Copy second row
@@ -232,6 +220,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
         // if (world_rank < numSmallRanks)
         //     printMatNaive("E_prev_rank_small", E_prev_rank, smallStride + 2, n + 2);
         // else
+        //     printMatNaive("E_prev_rank_big", E_prev_rank, bigStride + 2, n + 2);
 
         // Perform computation
 
