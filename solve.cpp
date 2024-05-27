@@ -20,6 +20,9 @@
 #include <mpi.h>
 using namespace std;
 
+#define TOP 0
+#define BOTTOM 1
+
 void repNorms(double l2norm, double mx, double dt, int m, int n, int niter, int stats_freq);
 void stats(double *E, int m, int n, double *_mx, double *sumSq);
 void printMat2(const char mesg[], double *E, int m, int n);
@@ -58,8 +61,8 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
     int niter;
     int m = cb.m, n = cb.n;
     int innerBlockRowStartIndex = (n + 2) + 1;
-    int innerBlockRowEndIndex = (((m + 2) * (n + 2) - 1) - (n)) - (n + 2);
-
+    // int innerBlockRowEndIndex = (((m + 2) * (n + 2) - 1) - (n)) - (n + 2);
+    int innerBlockRowEndIndex;
     // We continue to sweep over the mesh until the simulation has reached
     // the desired number of iterations
 
@@ -77,6 +80,8 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
     int numSmallRanks = world_size - numBigRanks;
     int *SmallRanks = (int *)malloc(sizeof(int) * (numSmallRanks));
     int *BigRanks = (int *)malloc(sizeof(int) * (numBigRanks));
+    double *topRow_rank;
+    double *bottomRow_rank;
     int i, j;
 
     for (i = 0; i < numSmallRanks; i++)
@@ -105,14 +110,17 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
 
     if (world_rank < numSmallRanks)
     {
-        E_prev_rank = (double *)malloc(sizeof(double) * smallStride * (n + 2));
-        R_rank = (double *)malloc(sizeof(double) * smallStride * (n + 2));
+        E_prev_rank = (double *)malloc(sizeof(double) * (smallStride + 2) * (n + 2));
+        R_rank = (double *)malloc(sizeof(double) * (smallStride + 2) * (n + 2));
     }
     else
     {
-        E_prev_rank = (double *)malloc(sizeof(double) * bigStride * (n + 2));
-        R_rank = (double *)malloc(sizeof(double) * bigStride * (n + 2));
+        E_prev_rank = (double *)malloc(sizeof(double) * (bigStride + 2) * (n + 2));
+        R_rank = (double *)malloc(sizeof(double) * (bigStride + 2) * (n + 2));
     }
+
+    topRow_rank = (double *)malloc(sizeof(double) * (n + 2));
+    bottomRow_rank = (double *)malloc(sizeof(double) * (n + 2));
 
     for (niter = 0; niter < cb.niters; niter++)
     {
@@ -169,32 +177,65 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
         }
         //////////////////////////////////////////////////////////////////////////////
 
+        // Scatter initial condition to all processes. Try to move outside loop.
         if (world_rank < numSmallRanks)
         {
             MPI_Scatter(E_prev, (n + 2) * smallStride, MPI_DOUBLE,
-                        E_prev_rank, (n + 2) * smallStride, MPI_DOUBLE, 0,
+                        E_prev_rank + (n + 2), (n + 2) * smallStride, MPI_DOUBLE, 0,
                         small_comm);
             MPI_Scatter(R, (n + 2) * smallStride, MPI_DOUBLE,
-                        R_rank, (n + 2) * smallStride, MPI_DOUBLE, 0,
+                        R_rank + (n + 2), (n + 2) * smallStride, MPI_DOUBLE, 0,
                         small_comm);
         }
 
         else
         {
             MPI_Scatter((E_prev + numSmallRanks * (n + 2) * smallStride), (n + 2) * bigStride, MPI_DOUBLE,
-                        E_prev_rank, (n + 2) * bigStride, MPI_DOUBLE, 0,
+                        E_prev_rank + (n + 2), (n + 2) * bigStride, MPI_DOUBLE, 0,
                         big_comm);
             MPI_Scatter((R + numSmallRanks * (n + 2) * smallStride), (n + 2) * bigStride, MPI_DOUBLE,
-                        R_rank, (n + 2) * bigStride, MPI_DOUBLE, 0,
+                        R_rank + (n + 2), (n + 2) * bigStride, MPI_DOUBLE, 0,
                         big_comm);
         }
 
-        // printf("Process %d ", world_rank);
-        // if (world_rank < numSmallRanks)
-        //     printMatNaive("E_prev_rank_small", E_prev_rank, smallStride, n + 2);
-        // else
-        //     printMatNaive("E_prev_rank_big", E_prev_rank, bigStride, n + 2);
+        // Buffer my ghost cells
+        int stride_rank = (world_rank < numSmallRanks) ? smallStride : bigStride;
 
+        for (i = 0; i < (n + 2); i++)
+        {
+            topRow_rank[i] = E_prev_rank[i + (n + 2)];                  // Copy second row
+            bottomRow_rank[i] = E_prev_rank[i + stride_rank * (n + 2)]; // Copy second last row
+        }
+
+        // Share ghost cells before computation
+        if (world_rank == 0)
+        {
+            MPI_Send(bottomRow_rank, (n + 2), MPI_DOUBLE, world_rank + 1, BOTTOM, MPI_COMM_WORLD);
+            MPI_Recv(E_prev_rank + (stride_rank + 1) * (n + 2), (n + 2), MPI_DOUBLE, world_rank + 1, TOP, MPI_COMM_WORLD, MPI_STATUS_IGNORE); // Copy into last row
+        }
+
+        else if (world_rank == world_size - 1)
+        {
+            MPI_Send(topRow_rank, (n + 2), MPI_DOUBLE, world_rank - 1, TOP, MPI_COMM_WORLD);
+            MPI_Recv(E_prev_rank, (n + 2), MPI_DOUBLE, world_rank - 1, BOTTOM, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+
+        else
+        {
+            MPI_Send(topRow_rank, (n + 2), MPI_DOUBLE, world_rank - 1, TOP, MPI_COMM_WORLD);
+            MPI_Send(bottomRow_rank, (n + 2), MPI_DOUBLE, world_rank + 1, BOTTOM, MPI_COMM_WORLD);
+            MPI_Recv(E_prev_rank + (stride_rank + 1) * (n + 2), (n + 2), MPI_DOUBLE, world_rank + 1, TOP, MPI_COMM_WORLD, MPI_STATUS_IGNORE); // Copy into last row
+            MPI_Recv(E_prev_rank, (n + 2), MPI_DOUBLE, world_rank - 1, BOTTOM, MPI_COMM_WORLD, MPI_STATUS_IGNORE);                            // Copy into first row
+        }
+
+        // printf("\nProcess %d ", world_rank);
+        // if (world_rank < numSmallRanks)
+        //     printMatNaive("E_prev_rank_small", E_prev_rank, smallStride + 2, n + 2);
+        // else
+
+        // Perform computation
+
+        innerBlockRowEndIndex = stride_rank * (n + 2);
 #define FUSED 1
 
 #ifdef FUSED
@@ -202,9 +243,9 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
         // Solve for the excitation, a PDE
         for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (n + 2))
         {
-            E_tmp = E + j;
-            E_prev_tmp = E_prev + j;
-            R_tmp = R + j;
+            E_tmp = E + stride_rank * (n + 2) + j - innerBlockRowStartIndex;
+            E_prev_tmp = E_prev_rank + j;
+            R_tmp = R + stride_rank * (n + 2) + j - innerBlockRowStartIndex;
             for (i = 0; i < n; i++)
             {
                 E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (n + 2)] + E_prev_tmp[i - (n + 2)]);
