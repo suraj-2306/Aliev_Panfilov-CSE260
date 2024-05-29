@@ -60,8 +60,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
     double mx, sumSq;
     int niter;
     int m = cb.m, n = cb.n;
-    int innerBlockRowStartIndex = (n + 2) + 1;
-    // int innerBlockRowEndIndex = (((m + 2) * (n + 2) - 1) - (n)) - (n + 2);
+    int innerBlockRowStartIndex;
     int innerBlockRowEndIndex;
     // We continue to sweep over the mesh until the simulation has reached
     // the desired number of iterations
@@ -77,6 +76,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
     int stride_rank = (world_rank < numSmallRanks) ? smallStride : bigStride;
     int *scatterCounts = (int *)malloc(sizeof(int) * world_size);
     int *sourceOffsets = (int *)malloc(sizeof(int) * world_size);
+    double *E_rank = (double *)malloc(sizeof(double) * (stride_rank + 2) * (n + 2));
     double *E_prev_rank = (double *)malloc(sizeof(double) * (stride_rank + 2) * (n + 2));
     double *R_rank = (double *)malloc(sizeof(double) * (stride_rank + 2) * (n + 2));
     double *topRow_rank = (double *)malloc(sizeof(double) * (n + 2));
@@ -171,32 +171,35 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
             MPI_Recv(E_prev_rank, (n + 2), MPI_DOUBLE, world_rank - 1, BOTTOM, MPI_COMM_WORLD, MPI_STATUS_IGNORE);                            // Copy into first row
         }
 
-        printf("\nProcess %d ", world_rank);
-        if (world_rank < numSmallRanks)
-            printMatNaive("E_prev_rank_small", E_prev_rank, smallStride + 2, n + 2);
-        else
-            printMatNaive("E_prev_rank_big", E_prev_rank, bigStride + 2, n + 2);
+        MPI_Barrier(MPI_COMM_WORLD);
+
+        // printf("\nProcess %d ", world_rank);
+        // if (world_rank < numSmallRanks)
+        //     printMatNaive("E_prev_rank_small", E_prev_rank, smallStride + 2, n + 2);
+        // else
+        //     printMatNaive("E_prev_rank_big", E_prev_rank, bigStride + 2, n + 2);
 
         // Perform computation
 
+        innerBlockRowStartIndex = (n + 2);
         innerBlockRowEndIndex = stride_rank * (n + 2);
 #define FUSED 1
 
 #ifdef FUSED
 
         // Solve for the excitation, a PDE
-        // for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (n + 2))
-        // {
-        //     E_tmp = E + stride_rank * (n + 2) + j - innerBlockRowStartIndex;
-        //     E_prev_tmp = E_prev_rank + j;
-        //     R_tmp = R + stride_rank * (n + 2) + j - innerBlockRowStartIndex;
-        //     for (i = 0; i < n; i++)
-        //     {
-        //         E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (n + 2)] + E_prev_tmp[i - (n + 2)]);
-        //         E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
-        //         R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
-        //     }
-        // }
+        for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (n + 2))
+        {
+            E_tmp = E_rank + j;
+            E_prev_tmp = E_prev_rank + j;
+            R_tmp = R_rank + j;
+            for (i = 1; i <= n; i++)
+            {
+                E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (n + 2)] + E_prev_tmp[i - (n + 2)]);
+                E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
+                R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+            }
+        }
 #else
         // Solve for the excitation, a PDE
         for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (n + 2))
@@ -247,11 +250,13 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
         }
 
         // Swap current and previous meshes
-        // double *tmp = E;
-        // E = E_prev;
-        // E_prev = tmp;
+        double *tmp = E_rank;
+        E = E_prev_rank;
+        E_prev = tmp;
 
     } // end of 'niter' loop at the beginning
+
+    MPI_Barrier(MPI_COMM_WORLD);
 
     //  printMat2("Rank 0 Matrix E_prev", E_prev, m,n);  // return the L2 and infinity norms via in-out parameters
 
@@ -261,8 +266,6 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
     // // Swap pointers so we can re-use the arrays
     // *_E = E;
     // *_E_prev = E_prev;
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 void printMat2(const char mesg[], double *E, int m, int n)
