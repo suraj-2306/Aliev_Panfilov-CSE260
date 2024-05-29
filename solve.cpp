@@ -108,8 +108,8 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
             stats(E_prev, m, n, &mx, &sumSq);
             double l2norm = L2Norm(sumSq);
             repNorms(l2norm, mx, dt, m, n, -1, cb.stats_freq);
-            if (cb.plot_freq)
-                plotter->updatePlot(E, -1, m + 1, n + 1);
+            if (cb.plot_freq && world_rank == 0)
+                plotter->updatePlot(E_prev, -1, m + 1, n + 1);
         }
 
         // Update physical borders
@@ -181,8 +181,8 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
 
         // Perform computation
 
-        innerBlockRowStartIndex = (n + 2);
-        innerBlockRowEndIndex = stride_rank * (n + 2);
+        innerBlockRowStartIndex = ((world_rank == 0) ? 2 : 1) * (n + 2);                            // Ignore physical boundary padding at the top of first chunk of rows
+        innerBlockRowEndIndex = (stride_rank - ((world_rank == world_size - 1) ? 0 : 1)) * (n + 2); // Ignore physical boundary padding at the bottom of last chunk of rows
 #define FUSED 1
 
 #ifdef FUSED
@@ -241,13 +241,13 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
             }
         }
 
-        if (cb.plot_freq)
-        {
-            if (!(niter % cb.plot_freq))
-            {
-                plotter->updatePlot(E, niter, m, n);
-            }
-        }
+        // if (cb.plot_freq)
+        // {
+        //     if (!(niter % cb.plot_freq))
+        //     {
+        //         plotter->updatePlot(E, niter, m, n);
+        //     }
+        // }
 
         // Swap current and previous meshes
         double *tmp = E_rank;
@@ -278,6 +278,14 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
         // Swap pointers so we can re-use the arrays
         *_E = E;
         *_E_prev = E_prev;
+    }
+
+    if (cb.plot_freq)
+    {
+        if (world_rank == 0)
+        {
+            plotter->updatePlot(E_prev, niter, m, n);
+        }
     }
 }
 
