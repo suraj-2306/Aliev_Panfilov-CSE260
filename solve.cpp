@@ -27,6 +27,7 @@ void repNorms(double l2norm, double mx, double dt, int m, int n, int niter, int 
 void stats(double *E, int m, int n, double *_mx, double *sumSq);
 void printMat2(const char mesg[], double *E, int m, int n);
 void printMatNaive(const char mesg[], double *E, int m, int n);
+void printMatRank(const char mesg[], int rank, double *E, int m, int n);
 
 extern control_block cb;
 
@@ -155,12 +156,22 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
         {
             MPI_Send(bottomRow_rank, (n + 2), MPI_DOUBLE, world_rank + 1, BOTTOM, MPI_COMM_WORLD);
             MPI_Recv(E_prev_rank + (stride_rank + 1) * (n + 2), (n + 2), MPI_DOUBLE, world_rank + 1, TOP, MPI_COMM_WORLD, MPI_STATUS_IGNORE); // Copy into last row
+            // Initialize top row of ghost cells
+            for (i = 0; i < (n + 2); i++)
+            {
+                E_prev_rank[i] = 123;
+            }
         }
 
         else if (world_rank == world_size - 1)
         {
             MPI_Send(topRow_rank, (n + 2), MPI_DOUBLE, world_rank - 1, TOP, MPI_COMM_WORLD);
             MPI_Recv(E_prev_rank, (n + 2), MPI_DOUBLE, world_rank - 1, BOTTOM, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            // Initialize bottom row of ghost cells
+            for (i = 0; i < (n + 2); i++)
+            {
+                E_prev_rank[(stride_rank + 1) * (n + 2) + i] = 123;
+            }
         }
 
         else
@@ -171,7 +182,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
             MPI_Recv(E_prev_rank, (n + 2), MPI_DOUBLE, world_rank - 1, BOTTOM, MPI_COMM_WORLD, MPI_STATUS_IGNORE);                            // Copy into first row
         }
 
-        // MPI_Barrier(MPI_COMM_WORLD);
+        MPI_Barrier(MPI_COMM_WORLD);
 
         // printf("\nProcess %d ", world_rank);
         // if (world_rank < numSmallRanks)
@@ -181,11 +192,15 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
 
         // Perform computation
 
-        innerBlockRowStartIndex = ((world_rank == 0) ? 2 : 1) * (n + 2);                            // Ignore physical boundary padding at the top of first chunk of rows
-        innerBlockRowEndIndex = (stride_rank - ((world_rank == world_size - 1) ? 0 : 1)) * (n + 2); // Ignore physical boundary padding at the bottom of last chunk of rows
+        innerBlockRowStartIndex = ((world_rank == 0) ? 2 : 1) * (n + 2) + 1;                            // Ignore physical boundary padding at the top of first chunk of rows
+        innerBlockRowEndIndex = (stride_rank - ((world_rank == world_size - 1) ? 1 : 0)) * (n + 2) + 1; // Ignore physical boundary padding at the bottom of last chunk of rows
+
 #define FUSED 1
 
 #ifdef FUSED
+
+        // printMatRank("E_prev_rank0", 0, E_prev_rank, stride_rank + 2, n + 2);
+        // printMatRank("E_prev_rank1", 1, E_prev_rank, stride_rank + 2, n + 2);
 
         // Solve for the excitation, a PDE
         for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (n + 2))
@@ -193,13 +208,32 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
             E_tmp = E_rank + j;
             E_prev_tmp = E_prev_rank + j;
             R_tmp = R_rank + j;
-            for (i = 1; i <= n; i++)
+            for (i = 0; i < n; i++)
             {
+                // if (world_rank == 0)
+                //     printf("%3.1f ", E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (n + 2)] + E_prev_tmp[i - (n + 2)]));
                 E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (n + 2)] + E_prev_tmp[i - (n + 2)]);
                 E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
                 R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
             }
+            // printf("\n");
         }
+
+        // for (j = 2; j <= 15; j += (n + 2))
+        // {
+        //     E_tmp = E_rank + j;
+        //     E_prev_tmp = E_prev_rank + j;
+        //     R_tmp = R_rank + j;
+        //     for (i = 0; i < n; i++)
+        //     {
+        //         E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (n + 2)] + E_prev_tmp[i - (n + 2)]);
+        //         E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
+        //         R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+        //     }
+        // }
+
+        // printMatRank("E_prev_rank0 after computation", 0, E_prev_rank, stride_rank + 2, n + 2);
+        // printMatRank("E_rank0 after computation", 0, E_rank, stride_rank + 2, n + 2);
 #else
         // Solve for the excitation, a PDE
         for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (n + 2))
@@ -254,6 +288,9 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
         E_rank = E_prev_rank;
         E_prev_rank = tmp;
 
+        // printMatRank("E_prev_rank0 after swap", 0, E_prev_rank, stride_rank + 2, n + 2);
+        // printMatRank("E_rank0 after computation", 0, E_rank, stride_rank + 2, n + 2);
+
     } // end of 'niter' loop at the beginning
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -275,17 +312,14 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
         stats(E_prev, m, n, &Linf, &sumSq);
         L2 = L2Norm(sumSq);
 
-        // Swap pointers so we can re-use the arrays
-        *_E = E;
-        *_E_prev = E_prev;
-    }
-
-    if (cb.plot_freq)
-    {
-        if (world_rank == 0)
+        if (cb.plot_freq)
         {
             plotter->updatePlot(E_prev, niter, m, n);
         }
+
+        // Swap pointers so we can re-use the arrays
+        *_E = E;
+        *_E_prev = E_prev;
     }
 }
 
@@ -321,11 +355,39 @@ void printMatNaive(const char mesg[], double *E, int m, int n)
     printf("%s\n", mesg);
     for (i = 0; i < m; i++)
     {
-        printf("Rank%d col%d\t", world_rank, i);
+        printf("Rank%d row%d\t", world_rank, i);
         for (j = 0; j < n; j++)
         {
             printf("%6.3f ", E[i * n + j]);
         }
         printf("\n");
+    }
+}
+
+void printMatRank(const char mesg[], int rank, double *E, int m, int n)
+{
+    int i;
+    int j;
+    int world_size;
+    int world_rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size); // Get the number of processes
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank); // Get the rank of the process
+    for (int r = 0; r < world_size; r++)
+    {
+        if (world_rank == r && world_rank == rank)
+        {
+            printf("\n%s\n", mesg);
+            for (i = 0; i < m; i++)
+            {
+                printf("Rank%2d row%2d\t", world_rank, i);
+                for (j = 0; j < n; j++)
+                {
+                    printf("%3.1f ", E[i * n + j]);
+                    // cout << E[i * n + j] << " ";
+                }
+                printf("\n");
+            }
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
     }
 }

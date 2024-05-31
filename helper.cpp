@@ -116,7 +116,7 @@ void printMatNaiveHelper(const char mesg[], double *E, int m, int n)
 {
     int i;
 
-    printf("%s\n", mesg);
+    printf("\n%s\n", mesg);
     for (i = 0; i < m * n; i++)
     {
         int colIndex = i % n;
