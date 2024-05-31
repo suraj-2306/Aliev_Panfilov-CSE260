@@ -91,7 +91,14 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt, Pl
 
     for (i = 0; i < world_size; i++)
     {
-        sourceOffsets[i] = i * (n + 2) * smallStride + ((i <= numSmallRanks) ? 0 : (n + 2));
+        if (i > 0)
+        {
+            sourceOffsets[i] = sourceOffsets[i - 1] + ((i < (numSmallRanks + 1)) ? smallStride : bigStride) * (n + 2);
+        }
+        else
+        {
+            sourceOffsets[i] = 0;
+        }
     }
 
     MPI_Scatterv(E_prev, scatterCounts, sourceOffsets, MPI_DOUBLE,
