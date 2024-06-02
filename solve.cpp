@@ -34,9 +34,9 @@ void printMatNaive(const char mesg[], double *E, int m, int n);
 void printMatRank(const char mesg[], int rank, double *E, int m, int n);
 double *alloc1DAll(int size);
 void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n);
-double *createSendGhostBuffer(double *E, int dir, int m, int n);
+double buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n);
 void fillGhostCells(double *E, double *buf, int dir, int m, int n);
-void exchangeGhostCells(double *E, int rankX, int rankY, int m, int n);
+void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen, int rankX, int rankY, int m, int n);
 
 extern control_block cb;
 
@@ -94,6 +94,9 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     int *packedOffsets = new int[world_size];
     double *E_prevPacked = new double[cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2];
     double *RPacked = new double[cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2];
+    int ghostBufLen = MAX(stride_rankX, stride_rankY);
+    double *ghostCellSendBuf = new double[4 * ghostBufLen];
+    double *ghostCellRecvBuf = new double[4 * ghostBufLen];
 
     if (world_rank == 0)
     {
@@ -117,15 +120,6 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
                 sourceOffsets[j + i * cb.px] = sourceOffsetsX[j] + sourceOffsetsY[i];
                 scatterCounts[j + i * cb.px] = (((j < numSmallRanksX) ? smallStrideX : bigStrideX) + 2) * ((i < numSmallRanksY) ? smallStrideY : bigStrideY);
             }
-        }
-
-        for (i = 0; i < cb.py; i++)
-        {
-            for (j = 0; j < cb.px; j++)
-            {
-                printf("%d:%d\t", sourceOffsets[j + i * cb.px], scatterCounts[j + i * cb.px]);
-            }
-            printf("\n");
         }
 
         free(sourceOffsetsX);
@@ -183,18 +177,16 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
 
         // Update physical borders
         // CHECK FOR SMALL STEP SIZES
-        padPhysicalBoundaryCells(E_prev_rank, rankX, rankY, stride_rankX, stride_rankY);
-        MPI_Barrier(MPI_COMM_WORLD);
-        // printMatRank("E_prev_rank_padded0", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        padPhysicalBoundaryCells(E_prev_rank, rankX, rankY, stride_rankY, stride_rankX);
+        // printMatRank("E_prev_rank_padded1", 1, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
         // MPI_Barrier(MPI_COMM_WORLD);
         // printMatRank("E_prev_rank_padded2", 2, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
         // MPI_Barrier(MPI_COMM_WORLD);
 
         // Ghost cell exchange
-        exchangeGhostCells(E_prev_rank, rankX, rankY, stride_rankY, stride_rankX);
-        MPI_Barrier(MPI_COMM_WORLD);
+        exchangeGhostCells(E_prev_rank, ghostCellSendBuf, ghostCellRecvBuf, ghostBufLen, rankX, rankY, stride_rankY, stride_rankX);
         // MPI_Barrier(MPI_COMM_WORLD);
-        // printMatRank("E_prev_rank_with_Ghost_cells", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        // printMatRank("E_prev_rank0_with_Ghost_cells", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
 
         //     // Perform computation
 
@@ -481,34 +473,28 @@ void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n)
     }
 }
 
-double *createSendGhostBuffer(double *E, int dir, int m, int n)
+double buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n)
 {
     double *E_tmp = E + (n + 2) + 1; // move down 1 row and forward 1 column
-    double *buf;
     switch (dir)
     {
     case TOP:
-        buf = new double[n];
         for (int i = 0; i < n; i++)
             buf[i] = E_tmp[i];
         break;
     case RIGHT:
-        buf = new double[m];
         for (int i = 0; i < m; i++)
             buf[i] = E_tmp[(n - 1) + i * (n + 2)];
         break;
     case BOTTOM:
-        buf = new double[n];
         for (int i = 0; i < n; i++)
             buf[i] = E_tmp[i + (n + 2) * (m - 1)];
         break;
     case LEFT:
-        buf = new double[m];
         for (int i = 0; i < m; i++)
             buf[i] = E_tmp[i * (n + 2)];
         break;
     }
-    return buf;
 }
 
 void fillGhostCells(double *E, double *buf, int dir, int m, int n)
@@ -540,17 +526,22 @@ void fillGhostCells(double *E, double *buf, int dir, int m, int n)
     }
 }
 
-void exchangeGhostCells(double *E, int rankX, int rankY, int m, int n)
+void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen, int rankX, int rankY, int m, int n)
 {
-    double *bufSendTop = createSendGhostBuffer(E, TOP, m, n);
-    double *bufSendRight = createSendGhostBuffer(E, RIGHT, m, n);
-    double *bufSendBottom = createSendGhostBuffer(E, BOTTOM, m, n);
-    double *bufSendLeft = createSendGhostBuffer(E, LEFT, m, n);
+    double *bufSendTop = sendBuf;
+    double *bufSendRight = sendBuf + bufLen;
+    double *bufSendBottom = sendBuf + 2 * bufLen;
+    double *bufSendLeft = sendBuf + 3 * bufLen;
 
-    double *bufRecvTop = new double[n];
-    double *bufRecvRight = new double[m];
-    double *bufRecvBottom = new double[n];
-    double *bufRecvLeft = new double[m];
+    buildSendGhostBuffer(E, bufSendTop, TOP, m, n);
+    buildSendGhostBuffer(E, bufSendRight, RIGHT, m, n);
+    buildSendGhostBuffer(E, bufSendBottom, BOTTOM, m, n);
+    buildSendGhostBuffer(E, bufSendLeft, LEFT, m, n);
+
+    double *bufRecvTop = recvBuf;
+    double *bufRecvRight = recvBuf + bufLen;
+    double *bufRecvBottom = recvBuf + 2 * bufLen;
+    double *bufRecvLeft = recvBuf + 3 * bufLen;
 
     // Send and receive bottom cells
     if ((rankY + 1) < cb.py)
@@ -580,9 +571,4 @@ void exchangeGhostCells(double *E, int rankX, int rankY, int m, int n)
     fillGhostCells(E, bufRecvRight, RIGHT, m, n);
     fillGhostCells(E, bufRecvBottom, BOTTOM, m, n);
     fillGhostCells(E, bufRecvLeft, LEFT, m, n);
-
-    free(bufSendTop);
-    free(bufSendRight);
-    free(bufSendBottom);
-    free(bufSendLeft);
 }
