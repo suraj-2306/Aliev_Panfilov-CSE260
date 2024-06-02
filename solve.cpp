@@ -33,6 +33,7 @@ void printMat2(const char mesg[], double *E, int m, int n);
 void printMatNaive(const char mesg[], double *E, int m, int n);
 void printMatRank(const char mesg[], int rank, double *E, int m, int n);
 double *alloc1DAll(int size);
+void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n);
 double *createSendGhostBuffer(double *E, int dir, int m, int n);
 void fillGhostCells(double *E, double *buf, int dir, int m, int n);
 void exchangeGhostCells(double *E, int rankX, int rankY, int m, int n);
@@ -62,7 +63,6 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
 
     // Simulated time is different from the integer timestep number
     double t = 0.0;
-
     double *E = *_E, *E_prev = *_E_prev;
     double *R_tmp = R;
     double *E_tmp = *_E;
@@ -72,9 +72,6 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     int m = cb.m, n = cb.n;
     int innerBlockRowStartIndex;
     int innerBlockRowEndIndex;
-    // We continue to sweep over the mesh until the simulation has reached
-    // the desired number of iterations
-
     int world_size;
     int world_rank;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size); // Get the number of processes
@@ -92,23 +89,16 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     int stride_rankX = (world_rank % cb.px < numSmallRanksX) ? smallStrideX : bigStrideX;
     int stride_rankY = (world_rank / cb.px < numSmallRanksY) ? smallStrideY : bigStrideY;
     int i, j;
-    // if (world_rank == 5)
-    //     printf("small stride  %d %d\n big stride %d %d\n numBigranks %d %d\n "
-    //            "numSmallRanks %d %d\n striderank %d %d \n",
-    //            smallStrideX, smallStrideY, bigStrideX, bigStrideY, numBigRanksX,
-    //            numBigRanksY, numSmallRanksX, numSmallRanksY, stride_rankX,
-    //            stride_rankY);
-
-    int *scatterCounts = (int *)malloc(sizeof(int) * world_size);
-    int *sourceOffsets = (int *)malloc(sizeof(int) * world_size);
-    int *packedOffsets = (int *)malloc(sizeof(int) * world_size);
-    double *E_prevPacked = (double *)malloc(sizeof(double) * cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2); // alloc1DAll(cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);
-    double *RPacked = (double *)malloc(sizeof(double) * cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);      // alloc1DAll(cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);
+    int *scatterCounts = new int[world_size];
+    int *sourceOffsets = new int[world_size];
+    int *packedOffsets = new int[world_size];
+    double *E_prevPacked = new double[cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2];
+    double *RPacked = new double[cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2];
 
     if (world_rank == 0)
     {
-        int *sourceOffsetsX = (int *)malloc(sizeof(int) * cb.px);
-        int *sourceOffsetsY = (int *)malloc(sizeof(int) * cb.py);
+        int *sourceOffsetsX = new int[cb.px];
+        int *sourceOffsetsY = new int[cb.py];
         sourceOffsetsX[i] = 0;
         sourceOffsetsY[i] = 0;
         for (i = 1; i < cb.px; i++)
@@ -160,11 +150,9 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
         // printMatNaive("RPacked", RPacked, world_size, bigStrideX * bigStrideY + 2 * bigStrideY);
     }
 
-    double *E_rank = (double *)malloc(sizeof(double) * (stride_rankY + 2) * (stride_rankX + 2));
-    double *E_prev_rank = (double *)malloc(sizeof(double) * (stride_rankY + 2) * (stride_rankX + 2));
-    double *R_rank = (double *)malloc(sizeof(double) * (stride_rankY + 2) * (stride_rankX + 2));
-    // // // double *topRow_rank = (double *)malloc(sizeof(double) * (n + 2));
-    // // // double *bottomRow_rank = (double *)malloc(sizeof(double) * (n + 2));
+    double *E_rank = new double[(stride_rankY + 2) * (stride_rankX + 2)];
+    double *E_prev_rank = new double[(stride_rankY + 2) * (stride_rankX + 2)];
+    double *R_rank = new double[(stride_rankY + 2) * (stride_rankX + 2)];
 
     MPI_Scatterv(E_prevPacked, scatterCounts, packedOffsets, MPI_DOUBLE,
                  E_prev_rank + (stride_rankX + 2), stride_rankY * (stride_rankX + 2), MPI_DOUBLE, 0,
@@ -195,89 +183,18 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
 
         // Update physical borders
         // CHECK FOR SMALL STEP SIZES
-
-        // Top row
-        if (rankY == 0)
-        {
-            // Top boundary cells
-            for (i = (stride_rankX + 2); i < 2 * (stride_rankX + 2); i++)
-            {
-                E_prev_rank[i] = E_prev_rank[i + (stride_rankX + 2) * 2];
-            }
-
-            // Top left corner
-            if (rankX == 0)
-            {
-                for (i = (stride_rankX + 2) + 1; i <= (stride_rankY + 2) * (stride_rankX + 2); i += (stride_rankX + 2))
-                {
-                    E_prev_rank[i] = E_prev_rank[i + 2];
-                }
-            }
-            // Top right corner
-            else if (rankX == cb.px - 1)
-            {
-                for (i = 2 * (stride_rankX + 2) - 2; i <= (stride_rankY + 2) * (stride_rankX + 2); i += (stride_rankX + 2))
-                {
-                    E_prev_rank[i] = E_prev_rank[i - 2];
-                }
-            }
-        }
-
-        // Bottom row
-        else if (rankY == cb.py - 1)
-        {
-            for (i = (stride_rankY * (stride_rankX + 2)); i < (stride_rankY + 1) * (stride_rankX + 2); i++)
-            {
-                E_prev_rank[i] = E_prev_rank[i - (stride_rankX + 2) * 2];
-            }
-
-            // Bottom left corner
-            if (rankX == 0)
-            {
-                for (i = (stride_rankX + 2) + 1; i <= (stride_rankY + 2) * (stride_rankX + 2); i += (stride_rankX + 2))
-                {
-                    E_prev_rank[i] = E_prev_rank[i + 2];
-                }
-            }
-            else if (rankX == cb.px - 1)
-            {
-                // Right boundary cells
-                for (i = 2 * (stride_rankX + 2) - 2; i <= (stride_rankY + 2) * (stride_rankX + 2); i += (stride_rankX + 2))
-                {
-                    E_prev_rank[i] = E_prev_rank[i - 2];
-                }
-            }
-        }
-        // Left edge
-        else if (rankX == 0)
-        {
-            // Left boundary cells
-            for (i = (stride_rankX + 2) + 1; i <= (stride_rankY + 2) * (stride_rankX + 2); i += (stride_rankX + 2))
-            {
-                E_prev_rank[i] = E_prev_rank[i + 2];
-            }
-        }
-        // Right edge
-        else if (rankX == cb.px - 1)
-        {
-            // Right boundary cells
-            for (i = 2 * (stride_rankX + 2) - 2; i <= (stride_rankY + 2) * (stride_rankX + 2); i += (stride_rankX + 2))
-            {
-                E_prev_rank[i] = E_prev_rank[i - 2];
-            }
-        }
-
-        printMatRank("E_prev_rank_padded0", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        padPhysicalBoundaryCells(E_prev_rank, rankX, rankY, stride_rankX, stride_rankY);
         MPI_Barrier(MPI_COMM_WORLD);
-        printMatRank("E_prev_rank_padded2", 2, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
-        MPI_Barrier(MPI_COMM_WORLD);
+        // printMatRank("E_prev_rank_padded0", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // printMatRank("E_prev_rank_padded2", 2, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        // MPI_Barrier(MPI_COMM_WORLD);
 
         // Ghost cell exchange
-
         exchangeGhostCells(E_prev_rank, rankX, rankY, stride_rankY, stride_rankX);
-
         MPI_Barrier(MPI_COMM_WORLD);
-        printMatRank("E_prev_rank_with_Ghost_cells", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // printMatRank("E_prev_rank_with_Ghost_cells", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
 
         //     // Perform computation
 
@@ -487,6 +404,81 @@ double *alloc1DAll(int size)
     // Ensures that allocatdd memory is aligned on a 16 byte boundary
     assert(E = (double *)memalign(16, sizeof(double) * size));
     return (E);
+}
+
+void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n)
+{
+    int i;
+    // Top row
+    if (rankY == 0)
+    {
+        // Top boundary cells
+        for (i = (n + 2); i < 2 * (n + 2); i++)
+        {
+            E[i] = E[i + (n + 2) * 2];
+        }
+
+        // Top left corner
+        if (rankX == 0)
+        {
+            for (i = (n + 2) + 1; i <= (m + 2) * (n + 2); i += (n + 2))
+            {
+                E[i] = E[i + 2];
+            }
+        }
+        // Top right corner
+        else if (rankX == cb.px - 1)
+        {
+            for (i = 2 * (n + 2) - 2; i <= (m + 2) * (n + 2); i += (n + 2))
+            {
+                E[i] = E[i - 2];
+            }
+        }
+    }
+
+    // Bottom row
+    else if (rankY == cb.py - 1)
+    {
+        for (i = (m * (n + 2)); i < (m + 1) * (n + 2); i++)
+        {
+            E[i] = E[i - (n + 2) * 2];
+        }
+
+        // Bottom left corner
+        if (rankX == 0)
+        {
+            for (i = (n + 2) + 1; i <= (m + 2) * (n + 2); i += (n + 2))
+            {
+                E[i] = E[i + 2];
+            }
+        }
+        else if (rankX == cb.px - 1)
+        {
+            // Right boundary cells
+            for (i = 2 * (n + 2) - 2; i <= (m + 2) * (n + 2); i += (n + 2))
+            {
+                E[i] = E[i - 2];
+            }
+        }
+    }
+    // Left edge
+    else if (rankX == 0)
+    {
+        // Left boundary cells
+        for (i = (n + 2) + 1; i <= (m + 2) * (n + 2); i += (n + 2))
+        {
+            E[i] = E[i + 2];
+        }
+    }
+    // Right edge
+    else if (rankX == cb.px - 1)
+    {
+        // Right boundary cells
+        for (i = 2 * (n + 2) - 2; i <= (m + 2) * (n + 2); i += (n + 2))
+        {
+            E[i] = E[i - 2];
+        }
+    }
 }
 
 double *createSendGhostBuffer(double *E, int dir, int m, int n)
