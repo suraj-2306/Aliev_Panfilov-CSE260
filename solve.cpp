@@ -92,7 +92,9 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
 
     int *scatterCounts = (int *)malloc(sizeof(int) * world_size);
     int *sourceOffsets = (int *)malloc(sizeof(int) * world_size);
-    double *E_prevPacked = (int *)malloc(sizeof(int) * cb.px * bigStrideX * cb.py * bigStrideY);
+    int *packedOffsets = (int *)malloc(sizeof(int) * world_size);
+    double *E_prevPacked = (double *)malloc(sizeof(double) * cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);
+    double *RPacked = (double *)malloc(sizeof(double) * cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);
 
     if (world_rank == 0)
     {
@@ -114,7 +116,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
             for (j = 0; j < cb.px; j++)
             {
                 sourceOffsets[j + i * cb.px] = sourceOffsetsX[j] + sourceOffsetsY[i];
-                scatterCounts[j + i * cb.px] = ((j < numSmallRanksX) ? smallStrideX : bigStrideX) * ((i < numSmallRanksY) ? smallStrideY : bigStrideY);
+                scatterCounts[j + i * cb.px] = (((j < numSmallRanksX) ? smallStrideX : bigStrideX) + 2) * ((i < numSmallRanksY) ? smallStrideY : bigStrideY);
             }
         }
 
@@ -129,17 +131,48 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
 
         free(sourceOffsetsX);
         free(sourceOffsetsY);
-    }
-    //   int *sourceOffsetsX = (int *)malloc(sizeof(int) * world_size);
-    //   double *E_rank =
-    //       (double *)malloc(sizeof(double) * (stride_rank + 2) * (n + 2));
-    //   double *E_prev_rank =
-    //       (double *)malloc(sizeof(double) * (stride_rank + 2) * (n + 2));
-    //   double *R_rank =
-    //       (double *)malloc(sizeof(double) * (stride_rank + 2) * (n + 2));
-    //   double *topRow_rank = (double *)malloc(sizeof(double) * (n + 2));
-    //   double *bottomRow_rank = (double *)malloc(sizeof(double) * (n + 2));
 
+        for (int rankIter = 0; rankIter < world_size; rankIter++)
+        {
+            int strideX = (rankIter % cb.px < numSmallRanksX) ? smallStrideX : bigStrideX;
+            int strideY = (rankIter / cb.px < numSmallRanksY) ? smallStrideY : bigStrideY;
+            int offset = sourceOffsets[rankIter];
+            for (i = 0; i < strideY; i++)
+            {
+                for (j = 1; j <= strideX; j++)
+                {
+                    E_prevPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2) + j] = E_prev[offset + i * (n + 2) + (j - 1)];
+                    RPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2) + j] = R[offset + i * (n + 2) + (j - 1)];
+                }
+            }
+            packedOffsets[rankIter] = rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY);
+        }
+        printf("scatterCounts: ");
+        for (int rankIter = 0; rankIter < world_size; rankIter++)
+        {
+            printf("%d ", scatterCounts[rankIter]);
+        }
+        printf("\n");
+
+        printMatNaive("E_prev_packed", E_prevPacked, world_size, bigStrideX * bigStrideY + 2 * bigStrideY);
+    }
+
+    double *E_rank = (double *)malloc(sizeof(double) * (stride_rankY + 2) * (stride_rankX + 2));
+    double *E_prev_rank = (double *)malloc(sizeof(double) * (stride_rankY + 2) * (stride_rankX + 2));
+    double *R_rank = (double *)malloc(sizeof(double) * (stride_rankY + 2) * (stride_rankX + 2));
+    // // double *topRow_rank = (double *)malloc(sizeof(double) * (n + 2));
+    // // double *bottomRow_rank = (double *)malloc(sizeof(double) * (n + 2));
+
+    MPI_Scatterv(E_prevPacked, scatterCounts, packedOffsets, MPI_DOUBLE,
+                 E_prev_rank + (stride_rankX + 2), stride_rankY * (stride_rankX + 2), MPI_DOUBLE, 0,
+                 MPI_COMM_WORLD);
+
+    MPI_Scatterv(RPacked, scatterCounts, packedOffsets, MPI_DOUBLE,
+                 R_rank + (stride_rankX + 2), stride_rankY * (stride_rankX + 2), MPI_DOUBLE, 0,
+                 MPI_COMM_WORLD);
+
+    printMatRank("E_prev_rank", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+    printMatRank("R_rank", 0, R_rank, stride_rankY + 2, stride_rankX + 2);
     //   for (int i = 0; i < world_size; i++) {
     //     scatterCounts[i] =
     //         ((i < numSmallRanks) ? smallStride : bigStride) * (n + 2);
