@@ -22,7 +22,9 @@
 using namespace std;
 
 #define TOP 0
-#define BOTTOM 1
+#define RIGHT 1
+#define BOTTOM 2
+#define LEFT 3
 
 void repNorms(double l2norm, double mx, double dt, int m, int n, int niter,
               int stats_freq);
@@ -31,6 +33,9 @@ void printMat2(const char mesg[], double *E, int m, int n);
 void printMatNaive(const char mesg[], double *E, int m, int n);
 void printMatRank(const char mesg[], int rank, double *E, int m, int n);
 double *alloc1DAll(int size);
+double *createSendGhostBuffer(double *E, int dir, int m, int n);
+void fillGhostCells(double *E, double *buf, int dir, int m, int n);
+void exchangeGhostCells(double *E, int rankX, int rankY, int m, int n);
 
 extern control_block cb;
 
@@ -203,7 +208,6 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
             // Top left corner
             if (rankX == 0)
             {
-                // Left boundary cells
                 for (i = (stride_rankX + 2) + 1; i <= (stride_rankY + 2) * (stride_rankX + 2); i += (stride_rankX + 2))
                 {
                     E_prev_rank[i] = E_prev_rank[i + 2];
@@ -212,7 +216,6 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
             // Top right corner
             else if (rankX == cb.px - 1)
             {
-                // Right boundary cells
                 for (i = 2 * (stride_rankX + 2) - 2; i <= (stride_rankY + 2) * (stride_rankX + 2); i += (stride_rankX + 2))
                 {
                     E_prev_rank[i] = E_prev_rank[i - 2];
@@ -231,13 +234,11 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
             // Bottom left corner
             if (rankX == 0)
             {
-                // Left boundary cells
                 for (i = (stride_rankX + 2) + 1; i <= (stride_rankY + 2) * (stride_rankX + 2); i += (stride_rankX + 2))
                 {
                     E_prev_rank[i] = E_prev_rank[i + 2];
                 }
             }
-            // Bottom right corner
             else if (rankX == cb.px - 1)
             {
                 // Right boundary cells
@@ -266,89 +267,17 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
             }
         }
 
-        // printMatRank("E_prev_rank_padded", 5, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        printMatRank("E_prev_rank_padded0", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        MPI_Barrier(MPI_COMM_WORLD);
+        printMatRank("E_prev_rank_padded2", 2, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        MPI_Barrier(MPI_COMM_WORLD);
 
-        //     if (world_rank == 0) {
-        //       // Fills in the TOP Ghost Cells
-        //       for (i = (n + 2); i < 2 * (n + 2); i++) {
-        //         E_prev_rank[i] = E_prev_rank[i + (n + 2) * 2];
-        //       }
-        //     }
+        // Ghost cell exchange
 
-        //     else if (world_rank == world_size - 1) {
-        //       // Fills in the BOTTOM Ghost Cells
-        //       for (i = (stride_rank * (n + 2)); i < (stride_rank + 1) * (n + 2);
-        //       i++) {
-        //         E_prev_rank[i] = E_prev_rank[i - (n + 2) * 2];
-        //       }
-        //     }
+        exchangeGhostCells(E_prev_rank, rankX, rankY, stride_rankY, stride_rankX);
 
-        //     // Fills in the RIGHT Ghost Cells
-        //     for (i = 2 * (n + 2) - 1; i < (stride_rank + 2) * (n + 2); i += (n +
-        //     2)) {
-        //       E_prev_rank[i] = E_prev_rank[i - 2];
-        //     }
-
-        //     // Fills in the LEFT Ghost Cells
-        //     for (i = (n + 2); i < (stride_rank + 2) * (n + 2); i += (n + 2)) {
-        //       E_prev_rank[i] = E_prev_rank[i + 2];
-        //     }
-
-        //     // Buffer my ghost cells
-        //     for (i = 0; i < (n + 2); i++) {
-        //       topRow_rank[i] = E_prev_rank[i + (n + 2)]; // Copy second row
-        //       bottomRow_rank[i] =
-        //           E_prev_rank[i + stride_rank * (n + 2)]; // Copy second last row
-        //     }
-
-        //     // Share ghost cells before computation
-        //     if (world_rank == 0) {
-        //       MPI_Send(bottomRow_rank, (n + 2), MPI_DOUBLE, world_rank + 1, BOTTOM,
-        //                MPI_COMM_WORLD);
-        //       MPI_Recv(E_prev_rank + (stride_rank + 1) * (n + 2), (n + 2),
-        //       MPI_DOUBLE,
-        //                world_rank + 1, TOP, MPI_COMM_WORLD,
-        //                MPI_STATUS_IGNORE); // Copy into last row
-        //       // Initialize top row of ghost cells
-        //       for (i = 0; i < (n + 2); i++) {
-        //         E_prev_rank[i] = 123;
-        //       }
-        //     }
-
-        //     else if (world_rank == world_size - 1) {
-        //       MPI_Send(topRow_rank, (n + 2), MPI_DOUBLE, world_rank - 1, TOP,
-        //                MPI_COMM_WORLD);
-        //       MPI_Recv(E_prev_rank, (n + 2), MPI_DOUBLE, world_rank - 1, BOTTOM,
-        //                MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        //       // Initialize bottom row of ghost cells
-        //       for (i = 0; i < (n + 2); i++) {
-        //         E_prev_rank[(stride_rank + 1) * (n + 2) + i] = 123;
-        //       }
-        //     }
-
-        //     else {
-        //       MPI_Send(topRow_rank, (n + 2), MPI_DOUBLE, world_rank - 1, TOP,
-        //                MPI_COMM_WORLD);
-        //       MPI_Send(bottomRow_rank, (n + 2), MPI_DOUBLE, world_rank + 1, BOTTOM,
-        //                MPI_COMM_WORLD);
-        //       MPI_Recv(E_prev_rank + (stride_rank + 1) * (n + 2), (n + 2),
-        //       MPI_DOUBLE,
-        //                world_rank + 1, TOP, MPI_COMM_WORLD,
-        //                MPI_STATUS_IGNORE); // Copy into last row
-        //       MPI_Recv(E_prev_rank, (n + 2), MPI_DOUBLE, world_rank - 1, BOTTOM,
-        //                MPI_COMM_WORLD, MPI_STATUS_IGNORE); // Copy into first row
-        //     }
-
-        //     // MPI_Barrier(MPI_COMM_WORLD);
-
-        //     // printf("\nProcess %d ", world_rank);
-        //     // if (world_rank < numSmallRanks)
-        //     //     printMatNaive("E_prev_rank_small", E_prev_rank, smallStride + 2,
-        //     n +
-        //     //     2);
-        //     // else
-        //     //     printMatNaive("E_prev_rank_big", E_prev_rank, bigStride + 2, n +
-        //     2);
+        MPI_Barrier(MPI_COMM_WORLD);
+        printMatRank("E_prev_rank_with_Ghost_cells", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
 
         //     // Perform computation
 
@@ -558,4 +487,110 @@ double *alloc1DAll(int size)
     // Ensures that allocatdd memory is aligned on a 16 byte boundary
     assert(E = (double *)memalign(16, sizeof(double) * size));
     return (E);
+}
+
+double *createSendGhostBuffer(double *E, int dir, int m, int n)
+{
+    double *E_tmp = E + (n + 2) + 1; // move down 1 row and forward 1 column
+    double *buf;
+    switch (dir)
+    {
+    case TOP:
+        buf = new double[n];
+        for (int i = 0; i < n; i++)
+            buf[i] = E_tmp[i];
+        break;
+    case RIGHT:
+        buf = new double[m];
+        for (int i = 0; i < m; i++)
+            buf[i] = E_tmp[(n - 1) + i * (n + 2)];
+        break;
+    case BOTTOM:
+        buf = new double[n];
+        for (int i = 0; i < n; i++)
+            buf[i] = E_tmp[i + (n + 2) * (m - 1)];
+        break;
+    case LEFT:
+        buf = new double[m];
+        for (int i = 0; i < m; i++)
+            buf[i] = E_tmp[i * (n + 2)];
+        break;
+    }
+    return buf;
+}
+
+void fillGhostCells(double *E, double *buf, int dir, int m, int n)
+{
+    double *E_tmp;
+
+    switch (dir)
+    {
+    case TOP:
+        E_tmp = E + 1;
+        for (int i = 0; i < n; i++)
+            E_tmp[i] = buf[i];
+        break;
+    case RIGHT:
+        E_tmp = E + (n + 2) + (n + 1);
+        for (int i = 0; i < m; i++)
+            E_tmp[i * (n + 2)] = buf[i];
+        break;
+    case BOTTOM:
+        E_tmp = E + 1 + (n + 2) * (m + 1);
+        for (int i = 0; i < n; i++)
+            E_tmp[i] = buf[i];
+        break;
+    case LEFT:
+        E_tmp = E + (n + 2);
+        for (int i = 0; i < m; i++)
+            E_tmp[i * (n + 2)] = buf[i];
+        break;
+    }
+}
+
+void exchangeGhostCells(double *E, int rankX, int rankY, int m, int n)
+{
+    double *bufSendTop = createSendGhostBuffer(E, TOP, m, n);
+    double *bufSendRight = createSendGhostBuffer(E, RIGHT, m, n);
+    double *bufSendBottom = createSendGhostBuffer(E, BOTTOM, m, n);
+    double *bufSendLeft = createSendGhostBuffer(E, LEFT, m, n);
+
+    double *bufRecvTop = new double[n];
+    double *bufRecvRight = new double[m];
+    double *bufRecvBottom = new double[n];
+    double *bufRecvLeft = new double[m];
+
+    // Send and receive bottom cells
+    if ((rankY + 1) < cb.py)
+        MPI_Sendrecv(bufSendBottom, n, MPI_DOUBLE, (rankX + (rankY + 1) * cb.px), BOTTOM,
+                     bufRecvBottom, n, MPI_DOUBLE, (rankX + (rankY + 1) * cb.px), TOP,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    // Send and receive right cells
+    if ((rankX + 1) < cb.px)
+        MPI_Sendrecv(bufSendRight, m, MPI_DOUBLE, (rankX + 1 + rankY * cb.px), RIGHT,
+                     bufRecvRight, m, MPI_DOUBLE, (rankX + 1 + rankY * cb.px), LEFT,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    // Send and receive top cells
+    if ((rankY - 1) >= 0)
+        MPI_Sendrecv(bufSendTop, n, MPI_DOUBLE, (rankX + (rankY - 1) * cb.px), TOP,
+                     bufRecvTop, n, MPI_DOUBLE, (rankX + (rankY - 1) * cb.px), BOTTOM,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    // Send and receive left cells
+    if ((rankX - 1) >= 0)
+        MPI_Sendrecv(bufSendLeft, m, MPI_DOUBLE, (rankX - 1 + rankY * cb.px), LEFT,
+                     bufRecvLeft, m, MPI_DOUBLE, (rankX - 1 + rankY * cb.px), RIGHT,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    fillGhostCells(E, bufRecvTop, TOP, m, n);
+    fillGhostCells(E, bufRecvRight, RIGHT, m, n);
+    fillGhostCells(E, bufRecvBottom, BOTTOM, m, n);
+    fillGhostCells(E, bufRecvLeft, LEFT, m, n);
+
+    free(bufSendTop);
+    free(bufSendRight);
+    free(bufSendBottom);
+    free(bufSendLeft);
 }
