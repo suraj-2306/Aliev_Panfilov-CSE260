@@ -18,6 +18,7 @@
 #include <mpi.h>
 #include <stdlib.h>
 #include <string>
+#include <malloc.h>
 using namespace std;
 
 #define TOP 0
@@ -29,6 +30,7 @@ void stats(double *E, int m, int n, double *_mx, double *sumSq);
 void printMat2(const char mesg[], double *E, int m, int n);
 void printMatNaive(const char mesg[], double *E, int m, int n);
 void printMatRank(const char mesg[], int rank, double *E, int m, int n);
+double *alloc1DAll(int size);
 
 extern control_block cb;
 
@@ -93,8 +95,8 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     int *scatterCounts = (int *)malloc(sizeof(int) * world_size);
     int *sourceOffsets = (int *)malloc(sizeof(int) * world_size);
     int *packedOffsets = (int *)malloc(sizeof(int) * world_size);
-    double *E_prevPacked = (double *)malloc(sizeof(double) * cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);
-    double *RPacked = (double *)malloc(sizeof(double) * cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);
+    double *E_prevPacked = (double *)malloc(sizeof(double) * cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2); // alloc1DAll(cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);
+    double *RPacked = (double *)malloc(sizeof(double) * cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);      // alloc1DAll(cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2);
 
     if (world_rank == 0)
     {
@@ -147,29 +149,27 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
             }
             packedOffsets[rankIter] = rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY);
         }
-        printf("scatterCounts: ");
-        for (int rankIter = 0; rankIter < world_size; rankIter++)
-        {
-            printf("%d ", scatterCounts[rankIter]);
-        }
-        printf("\n");
 
-        printMatNaive("E_prev_packed", E_prevPacked, world_size, bigStrideX * bigStrideY + 2 * bigStrideY);
+        // printMatNaive("RPacked", RPacked, world_size, bigStrideX * bigStrideY + 2 * bigStrideY);
     }
 
     double *E_rank = (double *)malloc(sizeof(double) * (stride_rankY + 2) * (stride_rankX + 2));
     double *E_prev_rank = (double *)malloc(sizeof(double) * (stride_rankY + 2) * (stride_rankX + 2));
     double *R_rank = (double *)malloc(sizeof(double) * (stride_rankY + 2) * (stride_rankX + 2));
-    // // double *topRow_rank = (double *)malloc(sizeof(double) * (n + 2));
-    // // double *bottomRow_rank = (double *)malloc(sizeof(double) * (n + 2));
+    // // // double *topRow_rank = (double *)malloc(sizeof(double) * (n + 2));
+    // // // double *bottomRow_rank = (double *)malloc(sizeof(double) * (n + 2));
 
     MPI_Scatterv(E_prevPacked, scatterCounts, packedOffsets, MPI_DOUBLE,
                  E_prev_rank + (stride_rankX + 2), stride_rankY * (stride_rankX + 2), MPI_DOUBLE, 0,
                  MPI_COMM_WORLD);
 
-    MPI_Scatterv(RPacked, scatterCounts, packedOffsets, MPI_DOUBLE,
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    MPI_Scatterv(E_prevPacked, scatterCounts, packedOffsets, MPI_DOUBLE,
                  R_rank + (stride_rankX + 2), stride_rankY * (stride_rankX + 2), MPI_DOUBLE, 0,
                  MPI_COMM_WORLD);
+
+    MPI_Barrier(MPI_COMM_WORLD);
 
     printMatRank("E_prev_rank", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
     printMatRank("R_rank", 0, R_rank, stride_rankY + 2, stride_rankX + 2);
@@ -488,4 +488,12 @@ void printMatRank(const char mesg[], int rank, double *E, int m, int n)
         }
         MPI_Barrier(MPI_COMM_WORLD);
     }
+}
+
+double *alloc1DAll(int size)
+{
+    double *E;
+    // Ensures that allocatdd memory is aligned on a 16 byte boundary
+    assert(E = (double *)memalign(16, sizeof(double) * size));
+    return (E);
 }
