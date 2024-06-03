@@ -350,6 +350,19 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     *_E = E;
     *_E_prev = E_prev;
   }
+  delete[] scatterCounts;
+  delete[] sourceOffsets;
+  delete[] packedOffsets;
+  delete[] ghostCellSendBuf;
+  delete[] ghostCellRecvBuf;
+  delete[] E_rank;
+  delete[] E_prev_rank;
+  delete[] R_rank;
+
+  if (world_rank == 0) {
+    free(E_prevPacked);
+    free(RPacked);
+  }
 }
 
 void printMat2(const char mesg[], double *E, int m, int n) {
