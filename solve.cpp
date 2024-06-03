@@ -37,6 +37,7 @@ void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n);
 double buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n);
 void fillGhostCells(double *E, double *buf, int dir, int m, int n);
 void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen, int rankX, int rankY, int m, int n);
+void calcComputeSpace(int rankX, int rankY, int m, int n, int &startIdx, int &endIdx, int &strideComp);
 
 extern control_block cb;
 
@@ -88,6 +89,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     int numSmallRanksY = cb.py - numBigRanksY;
     int stride_rankX = (world_rank % cb.px < numSmallRanksX) ? smallStrideX : bigStrideX;
     int stride_rankY = (world_rank / cb.px < numSmallRanksY) ? smallStrideY : bigStrideY;
+    int strideComp;
     int i, j;
     int *scatterCounts = new int[world_size];
     int *sourceOffsets = new int[world_size];
@@ -102,15 +104,15 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     {
         int *sourceOffsetsX = new int[cb.px];
         int *sourceOffsetsY = new int[cb.py];
-        sourceOffsetsX[i] = 0;
-        sourceOffsetsY[i] = 0;
+        sourceOffsetsX[0] = 0;
+        sourceOffsetsY[0] = 0;
         for (i = 1; i < cb.px; i++)
         {
-            sourceOffsetsX[i] = sourceOffsetsX[i - 1] + ((i < numSmallRanksX) ? smallStrideX : bigStrideX);
+            sourceOffsetsX[i] = sourceOffsetsX[i - 1] + ((i <= numSmallRanksX) ? smallStrideX : bigStrideX);
         }
         for (i = 1; i < cb.py; i++)
         {
-            sourceOffsetsY[i] = sourceOffsetsY[i - 1] + ((i < numSmallRanksY) ? smallStrideY : bigStrideY) * (n + 2);
+            sourceOffsetsY[i] = sourceOffsetsY[i - 1] + ((i <= numSmallRanksY) ? smallStrideY : bigStrideY) * (n + 2);
         }
 
         for (i = 0; i < cb.py; i++)
@@ -154,7 +156,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-    MPI_Scatterv(E_prevPacked, scatterCounts, packedOffsets, MPI_DOUBLE,
+    MPI_Scatterv(RPacked, scatterCounts, packedOffsets, MPI_DOUBLE,
                  R_rank + (stride_rankX + 2), stride_rankY * (stride_rankX + 2), MPI_DOUBLE, 0,
                  MPI_COMM_WORLD);
 
@@ -178,6 +180,8 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
         // Update physical borders
         // CHECK FOR SMALL STEP SIZES
         padPhysicalBoundaryCells(E_prev_rank, rankX, rankY, stride_rankY, stride_rankX);
+        // printMatRank("E_prev_rank_padded0", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        // MPI_Barrier(MPI_COMM_WORLD);
         // printMatRank("E_prev_rank_padded1", 1, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
         // MPI_Barrier(MPI_COMM_WORLD);
         // printMatRank("E_prev_rank_padded2", 2, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
@@ -187,137 +191,153 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
         exchangeGhostCells(E_prev_rank, ghostCellSendBuf, ghostCellRecvBuf, ghostBufLen, rankX, rankY, stride_rankY, stride_rankX);
         // MPI_Barrier(MPI_COMM_WORLD);
         // printMatRank("E_prev_rank0_with_Ghost_cells", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // printMatRank("E_prev_rank1_with_Ghost_cells", 1, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // Perform computation
 
-        //     // Perform computation
+        // innerBlockRowStartIndex = ((world_rank == 0) ? 2 : 1) * (stride_rankX + 2) + 2;                             // Ignore physical boundary padding at the top of first chunk of rows
+        // innerBlockRowEndIndex = (stride_rankY - ((world_rank == world_size - 1) ? 1 : 0)) * (stride_rankX + 2) + 2; // Ignore physical boundary padding at the bottom of lastchunk of rows
+        innerBlockRowStartIndex = 0;
+        innerBlockRowEndIndex = (stride_rankX + 2) * (stride_rankY + 2) - 1;
+        calcComputeSpace(rankX, rankY, stride_rankY, stride_rankX, innerBlockRowStartIndex, innerBlockRowEndIndex, strideComp);
 
-        //     innerBlockRowStartIndex =
-        //         ((world_rank == 0) ? 2 : 1) * (n + 2) +
-        //         1; // Ignore physical boundary padding at the top of first chunk of
-        //         rows
-        //     innerBlockRowEndIndex =
-        //         (stride_rank - ((world_rank == world_size - 1) ? 1 : 0)) * (n + 2)
-        //         + 1; // Ignore physical boundary padding at the bottom of last
-        //         chunk of
-        //            // rows
+        // printf("\nRank: %d\tStartIdx: %d\tEndIdx: %d\tStrideComp: %d\n", world_rank, innerBlockRowStartIndex, innerBlockRowEndIndex, strideComp);
 
-        // #define FUSED 1
+#define FUSED 1
 
-        // #ifdef FUSED
+#ifdef FUSED
 
-        //     // printMatRank("E_prev_rank0", 0, E_prev_rank, stride_rank + 2, n +
-        //     2);
-        //     // printMatRank("E_prev_rank1", 1, E_prev_rank, stride_rank + 2, n +
-        //     2);
+        // Solve for the excitation, a PDE
+        for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (stride_rankX + 2))
+        {
+            E_tmp = E_rank + j;
+            E_prev_tmp = E_prev_rank + j;
+            R_tmp = R_rank + j;
+            for (i = 0; i < strideComp; i++)
+            {
+                E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (stride_rankX + 2)] + E_prev_tmp[i - (stride_rankX + 2)]);
+                E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
+                R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+                // printf("%3d:%3d\t", i, j);
+            }
+            // cout << "\n";
+        }
 
-        //     // Solve for the excitation, a PDE
-        //     for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
-        //          j += (n + 2)) {
-        //       E_tmp = E_rank + j;
-        //       E_prev_tmp = E_prev_rank + j;
-        //       R_tmp = R_rank + j;
-        //       for (i = 0; i < n; i++) {
-        //         E_tmp[i] =
-        //             E_prev_tmp[i] +
-        //             alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 *
-        //             E_prev_tmp[i] +
-        //                      E_prev_tmp[i + (n + 2)] + E_prev_tmp[i - (n + 2)]);
-        //         E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) *
-        //                                (E_prev_tmp[i] - 1) +
-        //                            E_prev_tmp[i] * R_tmp[i]);
-        //         R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) *
-        //                     (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b -
-        //                     1));
-        //       }
-        //     }
+#else
+        // Solve for the excitation, a PDE
+        for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (stride_rankX + 2))
+        {
+            E_tmp = E_rank + j;
+            E_prev_tmp = E_prev_rank + j;
+            for (i = 0; i < stride_rankX; i++)
+            {
+                E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (n + 2)] + E_prev_tmp[i - (n + 2)]);
+            }
+        }
 
-        // #else
-        //     // Solve for the excitation, a PDE
-        //     for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
-        //          j += (n + 2)) {
-        //       E_tmp = E_rank + j;
-        //       E_prev_tmp = E_prev_rank + j;
-        //       for (i = 0; i < n; i++) {
-        //         E_tmp[i] =
-        //             E_prev_tmp[i] +
-        //             alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 *
-        //             E_prev_tmp[i] +
-        //                      E_prev_tmp[i + (n + 2)] + E_prev_tmp[i - (n + 2)]);
-        //       }
-        //     }
+        /*
+         * Solve the ODE, advancing excitation and recovery variables
+         *     to the next timtestep
+         */
 
-        //     /*
-        //      * Solve the ODE, advancing excitation and recovery variables
-        //      *     to the next timtestep
-        //      */
+        for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (stride_rankX + 2))
+        {
+            E_tmp = E_rank + j;
+            E_prev_tmp = E_prev_rank + j;
+            R_tmp = R_rank + j;
+            for (i = 0; i < stride_rankX; i++)
+            {
+                E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
+                R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+            }
+        }
+#endif
+        ///////////////////////////////////////////////////////////////////////////////
 
-        //     for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
-        //          j += (n + 2)) {
-        //       E_tmp = E_rank + j;
-        //       E_prev_tmp = E_prev_rank + j;
-        //       R_tmp = R_rank + j;
-        //       for (i = 0; i < n; i++) {
-        //         E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) *
-        //                                (E_prev_tmp[i] - 1) +
-        //                            E_prev_tmp[i] * R_tmp[i]);
-        //         R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) *
-        //                     (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b -
-        //                     1));
-        //       }
-        //     }
-        // #endif
-        //     /////////////////////////////////////////////////////////////////////////////////
+        if (cb.stats_freq)
+        {
+            if (!(niter % cb.stats_freq))
+            {
+                stats(E, m, n, &mx, &sumSq);
+                double l2norm = L2Norm(sumSq);
+                repNorms(l2norm, mx, dt, m, n, niter, cb.stats_freq);
+            }
+        }
 
-        //     if (cb.stats_freq) {
-        //       if (!(niter % cb.stats_freq)) {
-        //         stats(E, m, n, &mx, &sumSq);
-        //         double l2norm = L2Norm(sumSq);
-        //         repNorms(l2norm, mx, dt, m, n, niter, cb.stats_freq);
-        //       }
-        //     }
+        //         if (cb.plot_freq)
+        //         {
+        //             MPI_Gatherv(E_rank + (stride_rankX + 2), stride_rankY * (stride_rankX + 2), MPI_DOUBLE,
+        //                         E_prevPacked, scatterCounts, packedOffsets, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        //             if (world_rank == 0 && !(niter % cb.plot_freq))
+        //             {
+        //                 ////////////////////////////////////////////////
+        //                 // Reshape packed array into original dimensions
+        //                 ////////////////////////////////////////////////
+        //                 for (int rankIter = 0; rankIter < world_size; rankIter++)
+        //                 {
+        //                     int strideX = (rankIter % cb.px < numSmallRanksX) ? smallStrideX : bigStrideX;
+        //                     int strideY = (rankIter / cb.px < numSmallRanksY) ? smallStrideY : bigStrideY;
+        //                     int offset = sourceOffsets[rankIter];
+        //                     for (i = 0; i < strideY; i++)
+        //                     {
+        //                         for (j = 1; j <= strideX; j++)
+        //                         {
+        //                             E_prev[offset + i * (n + 2) + (j - 1)] = E_prevPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2) + j];
+        //                         }
+        //                     }
+        //                 }
 
-        //     if (cb.plot_freq) {
-        //       MPI_Gatherv(E_rank + (n + 2), stride_rank * (n + 2), MPI_DOUBLE, E,
-        //                   scatterCounts, sourceOffsets, MPI_DOUBLE, 0,
-        //                   MPI_COMM_WORLD);
-        //       if (world_rank == 0 && !(niter % cb.plot_freq)) {
-        //         plotter->updatePlot(E, niter, m, n);
-        //       }
-        //     }
+        //                 plotter->updatePlot(E_prev, niter, m, n);
+        //             }
+        //         }
 
-        //     // Swap current and previous meshes
-        //     double *tmp = E_rank;
-        //     E_rank = E_prev_rank;
-        //     E_prev_rank = tmp;
+        // Swap current and previous meshes
+        double *tmp = E_rank;
+        E_rank = E_prev_rank;
+        E_prev_rank = tmp;
 
-        //     // printMatRank("E_prev_rank0 after swap", 0, E_prev_rank, stride_rank
-        //     + 2,
-        //     // n + 2); printMatRank("E_rank0 after computation", 0, E_rank,
-        //     stride_rank
-        //     // + 2, n + 2);
+    } // end of 'niter' loop at the beginning
 
-        //   } // end of 'niter' loop at the beginning
+    //     MPI_Barrier(MPI_COMM_WORLD);
+    // printMatRank("E_prev_rank", 0, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
 
-        //   // MPI_Barrier(MPI_COMM_WORLD);
+    // Gather results back to rank 0 packed arrays
+    MPI_Gatherv(E_prev_rank + (stride_rankX + 2), stride_rankY * (stride_rankX + 2), MPI_DOUBLE,
+                E_prevPacked, scatterCounts, packedOffsets, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-        //   // Gather results back to rank 0
-        //   MPI_Gatherv(E_prev_rank + (n + 2), stride_rank * (n + 2), MPI_DOUBLE,
-        //   E_prev,
-        //               scatterCounts, sourceOffsets, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-        //   MPI_Gatherv(R_rank + (n + 2), stride_rank * (n + 2), MPI_DOUBLE, R,
-        //               scatterCounts, sourceOffsets, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    //     //   //  printMat2("Rank 0 Matrix E_prev", E_prev, m,n);  // return the L2 and
+    //     //   //  infinity norms via in-out parameters
 
-        //   //  printMat2("Rank 0 Matrix E_prev", E_prev, m,n);  // return the L2 and
-        //   //  infinity norms via in-out parameters
+    MPI_Barrier(MPI_COMM_WORLD);
 
-        //   // MPI_Barrier(MPI_COMM_WORLD);
+    // printMatRank("E_prevPacked", 0, E_prevPacked, world_size, bigStrideX * bigStrideY + 2 * bigStrideY);
 
-        //   if (world_rank == 0) {
-        //     stats(E_prev, m, n, &Linf, &sumSq);
-        //     L2 = L2Norm(sumSq);
+    if (world_rank == 0)
+    {
+        ////////////////////////////////////////////////
+        // Reshape packed array into original dimensions
+        ////////////////////////////////////////////////
+        for (int rankIter = 0; rankIter < world_size; rankIter++)
+        {
+            int strideX = (rankIter % cb.px < numSmallRanksX) ? smallStrideX : bigStrideX;
+            int strideY = (rankIter / cb.px < numSmallRanksY) ? smallStrideY : bigStrideY;
+            int offset = sourceOffsets[rankIter];
+            for (i = 0; i < strideY; i++)
+            {
+                for (j = 1; j <= strideX; j++)
+                {
+                    E_prev[offset + i * (n + 2) + (j - 1)] = E_prevPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2) + j];
+                }
+            }
+        }
 
-        //     // Swap pointers so we can re-use the arrays
-        //     *_E = E;
-        //     *_E_prev = E_prev;
+        stats(E_prev, m, n, &Linf, &sumSq);
+        L2 = L2Norm(sumSq);
+
+        // Swap pointers so we can re-use the arrays
+        *_E = E;
+        *_E_prev = E_prev;
     }
 }
 
@@ -571,4 +591,49 @@ void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen,
     fillGhostCells(E, bufRecvRight, RIGHT, m, n);
     fillGhostCells(E, bufRecvBottom, BOTTOM, m, n);
     fillGhostCells(E, bufRecvLeft, LEFT, m, n);
+}
+
+void calcComputeSpace(int rankX, int rankY, int m, int n, int &startIdx, int &endIdx, int &strideComp)
+{
+    int i;
+    int startX;
+    int startY;
+    int endX;
+    int endY;
+    strideComp = n;
+
+    // Calculate new stride for computation
+    if (rankX == 0)
+        strideComp--;
+    if (rankX == cb.px - 1)
+        strideComp--;
+
+    // Calculate start positions for calculation
+    // X component of start position
+    if (rankX == 0)
+        startX = 2;
+    else
+        startX = 1;
+
+    // Y component of start position
+    if (rankY == 0)
+        startY = 2;
+    else
+        startY = 1;
+
+    startIdx += startX + startY * (n + 2);
+
+    // Calculate end positions for calculation
+    // X component of end position
+    if (rankX == cb.px - 1)
+        endX = 2;
+    else
+        endX = 1;
+
+    if (rankY == cb.py - 1)
+        endY = 2;
+    else
+        endY = 1;
+
+    endIdx -= (endX + endY * (n + 2));
 }
