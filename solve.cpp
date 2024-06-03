@@ -94,8 +94,8 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     int *scatterCounts = new int[world_size];
     int *sourceOffsets = new int[world_size];
     int *packedOffsets = new int[world_size];
-    double *E_prevPacked = new double[cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2];
-    double *RPacked = new double[cb.px * bigStrideX * cb.py * bigStrideY + bigStrideY * 2];
+    double *E_prevPacked = NULL;
+    double *RPacked = NULL;
     int ghostBufLen = MAX(stride_rankX, stride_rankY);
     double *ghostCellSendBuf = new double[4 * ghostBufLen];
     double *ghostCellRecvBuf = new double[4 * ghostBufLen];
@@ -104,6 +104,8 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     {
         int *sourceOffsetsX = new int[cb.px];
         int *sourceOffsetsY = new int[cb.py];
+        E_prevPacked = (double *)malloc(sizeof(double) * world_size * (bigStrideX * bigStrideY + bigStrideY * 2));
+        RPacked = (double *)malloc(sizeof(double) * world_size * (bigStrideX * bigStrideY + bigStrideY * 2));
         sourceOffsetsX[0] = 0;
         sourceOffsetsY[0] = 0;
         for (i = 1; i < cb.px; i++)
@@ -112,14 +114,14 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
         }
         for (i = 1; i < cb.py; i++)
         {
-            sourceOffsetsY[i] = sourceOffsetsY[i - 1] + ((i <= numSmallRanksY) ? smallStrideY : bigStrideY) * (n + 2);
+            sourceOffsetsY[i] = sourceOffsetsY[i - 1] + ((i <= numSmallRanksY) ? smallStrideY : bigStrideY);
         }
 
         for (i = 0; i < cb.py; i++)
         {
             for (j = 0; j < cb.px; j++)
             {
-                sourceOffsets[j + i * cb.px] = sourceOffsetsX[j] + sourceOffsetsY[i];
+                sourceOffsets[j + i * cb.px] = sourceOffsetsX[j] + sourceOffsetsY[i] * (n + 2);
                 scatterCounts[j + i * cb.px] = (((j < numSmallRanksX) ? smallStrideX : bigStrideX) + 2) * ((i < numSmallRanksY) ? smallStrideY : bigStrideY);
             }
         }
@@ -139,11 +141,14 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
                     E_prevPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2) + j] = E_prev[offset + i * (n + 2) + (j - 1)];
                     RPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2) + j] = R[offset + i * (n + 2) + (j - 1)];
                 }
+
+                E_prevPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2)] = 0;
+                E_prevPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2) + strideX + 1] = 0;
+                RPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2)] = 0;
+                RPacked[rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY) + i * (strideX + 2) + strideX + 1] = 0;
             }
             packedOffsets[rankIter] = rankIter * (bigStrideX * bigStrideY + 2 * bigStrideY);
         }
-
-        // printMatNaive("RPacked", RPacked, world_size, bigStrideX * bigStrideY + 2 * bigStrideY);
     }
 
     double *E_rank = new double[(stride_rankY + 2) * (stride_rankX + 2)];
@@ -161,9 +166,6 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
                  MPI_COMM_WORLD);
 
     MPI_Barrier(MPI_COMM_WORLD);
-
-    // printMatRank("E_prev_rank", 5, E_prev_rank, stride_rankY + 2, stride_rankX + 2);
-    // printMatRank("R_rank", 1, R_rank, stride_rankY + 2, stride_rankX + 2);
 
     for (niter = 0; niter < cb.niters; niter++)
     {
