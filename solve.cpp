@@ -34,7 +34,7 @@ void printMatNaive(const char mesg[], double *E, int m, int n);
 void printMatRank(const char mesg[], int rank, double *E, int m, int n);
 double *alloc1DAll(int size);
 void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n);
-double buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n);
+void buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n);
 void fillGhostCells(double *E, double *buf, int dir, int m, int n);
 void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen, int rankX, int rankY, int m, int n);
 void calcComputeSpace(int rankX, int rankY, int m, int n, int &startIdx, int &endIdx, int &strideComp);
@@ -495,7 +495,7 @@ void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n)
     }
 }
 
-double buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n)
+void buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n)
 {
     double *E_tmp = E + (n + 2) + 1; // move down 1 row and forward 1 column
     switch (dir)
