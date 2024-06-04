@@ -224,36 +224,39 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
                        stride_rankY, strideComp);
     // Top edge computation
     int startIdx = innerBlockRowStartIndex - (stride_rankX + 2) - 1;
-    int endIdx = innerBlockRowStartIndex - (stride_rankX + 2) - 2 + strideComp;
-    int stride = strideComp;
+    int endIdx = innerBlockRowStartIndex - (stride_rankX + 2) + strideComp;
+    int stride = strideComp + 2;
 
-    // printf("rank=%d, startxIdx=%d,endIdx=%d,stride=%d \n", world_rank,
-    // startIdx, endIdx, stride);
     solveAlievPanfilov(E_rank, E_prev_rank, R_rank, startIdx, endIdx, alpha, dt,
                        stride_rankX, stride_rankY, stride);
 
     // // // Left edge computation
     startIdx = innerBlockRowStartIndex - (stride_rankX + 2) - 1;
-    endIdx = innerBlockRowEndIndex + (stride_rankX + 2) - (strideComp - 2);
+    endIdx = innerBlockRowEndIndex + (stride_rankX + 2) - strideComp;
     stride = 1;
     solveAlievPanfilov(E_rank, E_prev_rank, R_rank, startIdx, endIdx, alpha, dt,
                        stride_rankX, stride_rankY, stride);
 
     //  Right edge computation
-    startIdx = innerBlockRowStartIndex - (stride_rankX + 2) - 2 + strideComp;
-    endIdx = innerBlockRowEndIndex + stride_rankX + 2 + 1;
+    startIdx = innerBlockRowStartIndex - (stride_rankX + 2) + strideComp;
+    endIdx = innerBlockRowEndIndex + 1 + stride_rankX + 2;
     stride = 1;
+    // printf("rank=%d, startxIdx=%d,endIdx=%d,stride=%d \n", world_rank,
+    // startIdx,
+    //        endIdx, stride);
 
     solveAlievPanfilov(E_rank, E_prev_rank, R_rank, startIdx, endIdx, alpha, dt,
                        stride_rankX, stride_rankY, stride);
 
     // //  Bottom edge computation
-    startIdx = innerBlockRowEndIndex + (stride_rankX + 2) - (strideComp - 2);
-    endIdx = innerBlockRowEndIndex + stride_rankX + 2 + 1;
-    stride = strideComp;
+    startIdx = innerBlockRowEndIndex + (stride_rankX + 2) - strideComp;
+    endIdx = innerBlockRowEndIndex + 1 + stride_rankX + 2;
+    stride = strideComp + 2;
 
     solveAlievPanfilov(E_rank, E_prev_rank, R_rank, startIdx, endIdx, alpha, dt,
                        stride_rankX, stride_rankY, stride);
+    printf("rank=%d, startxIdx=%d,endIdx=%d,stride=%d \n", world_rank, startIdx,
+           endIdx, stride);
 
     // // Top left corner
     // int idx = innerBlockRowStartIndex - 1 - (stride_rankX + 2);
@@ -573,7 +576,7 @@ void calcComputeSpace(int rankX, int rankY, int m, int n, int &startIdx,
   int startY;
   int endX;
   int endY;
-  strideComp = n;
+  strideComp = n - 2;
 
   // Calculate new stride for computation
   if (rankX == 0)
