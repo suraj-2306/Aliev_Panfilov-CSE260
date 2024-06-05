@@ -226,22 +226,26 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
                        innerBlockRowEndIndex, alpha, dt, stride_rankX,
                        stride_rankY, strideComp);
 
+    MPI_Waitall(4, recvReq, MPI_STATUS_IGNORE);
+
     // Wait for ghost cells to arrive
-    if ((rankY - 1) >= 0)
-      MPI_Wait(&recvReq[0], MPI_STATUS_IGNORE);
+    // if ((rankY - 1) >= 0)
+    //   MPI_Wait(&recvReq[0], MPI_STATUS_IGNORE);
 
-    // Send and receive right cells
-    if ((rankX + 1) < cb.px)
-      MPI_Wait(&recvReq[1], MPI_STATUS_IGNORE);
+    // // Send and receive right cells
+    // if ((rankX + 1) < cb.px)
+    //   MPI_Wait(&recvReq[1], MPI_STATUS_IGNORE);
 
-    // Send and receive bottom cells
-    if ((rankY + 1) < cb.py)
-      MPI_Wait(&recvReq[2], MPI_STATUS_IGNORE);
+    // // Send and receive bottom cells
+    // if ((rankY + 1) < cb.py)
+    //   MPI_Wait(&recvReq[2], MPI_STATUS_IGNORE);
 
-    // Send and receive left cells
-    if ((rankX - 1) >= 0)
-      MPI_Wait(&recvReq[3], MPI_STATUS_IGNORE);
-    // WAIT ends here
+    // // Send and receive left cells
+    // if ((rankX - 1) >= 0)
+    //   MPI_Wait(&recvReq[3], MPI_STATUS_IGNORE);
+    // // WAIT ends here
+    //
+    //
 
     fillGhostCells(E_prev_rank, ghostCellRecvBuf, TOP, stride_rankY,
                    stride_rankX);
@@ -596,26 +600,29 @@ void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen,
   if ((rankY - 1) >= 0)
     MPI_Irecv(bufRecvTop, n, MPI_DOUBLE, (rankX + (rankY - 1) * cb.px), BOTTOM,
               MPI_COMM_WORLD, &recvReq[0]);
+  else
+    recvReq[0] = MPI_REQUEST_NULL;
 
   // Send and receive right cells
   if ((rankX + 1) < cb.px)
     MPI_Irecv(bufRecvRight, m, MPI_DOUBLE, (rankX + 1 + rankY * cb.px), LEFT,
               MPI_COMM_WORLD, &recvReq[1]);
+  else
+    recvReq[1] = MPI_REQUEST_NULL;
 
   // Send and receive bottom cells
   if ((rankY + 1) < cb.py)
     MPI_Irecv(bufRecvBottom, n, MPI_DOUBLE, (rankX + (rankY + 1) * cb.px), TOP,
               MPI_COMM_WORLD, &recvReq[2]);
+  else
+    recvReq[2] = MPI_REQUEST_NULL;
 
   // Send and receive left cells
   if ((rankX - 1) >= 0)
     MPI_Irecv(bufRecvLeft, m, MPI_DOUBLE, (rankX - 1 + rankY * cb.px), RIGHT,
               MPI_COMM_WORLD, &recvReq[3]);
-
-  // fillGhostCells(E, bufRecvTop, TOP, m, n);
-  // fillGhostCells(E, bufRecvRight, RIGHT, m, n);
-  // fillGhostCells(E, bufRecvBottom, BOTTOM, m, n);
-  // fillGhostCells(E, bufRecvLeft, LEFT, m, n);
+  else
+    recvReq[3] = MPI_REQUEST_NULL;
 }
 
 void calcComputeSpace(int rankX, int rankY, int m, int n, int &startIdx,
