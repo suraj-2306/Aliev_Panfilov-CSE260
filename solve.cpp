@@ -259,7 +259,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
       solveAlievPanfilovEdge(E_rank, E_prev_rank, R_rank, ghostCellRecvBuf,
                              ghostBufLen, alpha, dt, stride_rankY, stride_rankX,
                              innerBlockRowStartIndex, innerBlockRowEndIndex,
-                             strideComp, idxCompute,valid);
+                             strideComp, idxCompute, valid);
     }
     // // Top left corner
     int idx = innerBlockRowStartIndex - 1 - (stride_rankX + 2);
@@ -536,66 +536,64 @@ void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen,
   recvReq[3] = MPI_REQUEST_NULL;
 
   if (!cb.noComm) {
-    double *bufSendTop = sendBuf;
-    double *bufSendRight = sendBuf + bufLen;
-    double *bufSendBottom = sendBuf + 2 * bufLen;
-    double *bufSendLeft = sendBuf + 3 * bufLen;
-
-    buildSendGhostBuffer(E, bufSendTop, TOP, m, n);
-    buildSendGhostBuffer(E, bufSendRight, RIGHT, m, n);
-    buildSendGhostBuffer(E, bufSendBottom, BOTTOM, m, n);
-    buildSendGhostBuffer(E, bufSendLeft, LEFT, m, n);
-
-    double *bufRecvTop = recvBuf;
-    double *bufRecvRight = recvBuf + bufLen;
-    double *bufRecvBottom = recvBuf + 2 * bufLen;
-    double *bufRecvLeft = recvBuf + 3 * bufLen;
 
     MPI_Request sendReq;
-    // MPI_Request recvReq = new MPI_Request[4];
 
     // SEND Ghost Cells using non-blocking MPI calls
     // Send and receive top cells
-    if ((rankY - 1) >= 0 && !cb.noComm)
+    if ((rankY - 1) >= 0 && !cb.noComm) {
+      double *bufSendTop = sendBuf;
+      buildSendGhostBuffer(E, bufSendTop, TOP, m, n);
       MPI_Isend(bufSendTop, n, MPI_DOUBLE, (rankX + (rankY - 1) * cb.px), TOP,
                 MPI_COMM_WORLD, &sendReq);
-
+    }
     // Send and receive right cells
-    if ((rankX + 1) < cb.px && !cb.noComm)
+    if ((rankX + 1) < cb.px && !cb.noComm) {
+      double *bufSendRight = sendBuf + bufLen;
+      buildSendGhostBuffer(E, bufSendRight, RIGHT, m, n);
       MPI_Isend(bufSendRight, m, MPI_DOUBLE, (rankX + 1 + rankY * cb.px), RIGHT,
                 MPI_COMM_WORLD, &sendReq);
-
+    }
     // Send and receive bottom cells
-    if ((rankY + 1) < cb.py && !cb.noComm)
+    if ((rankY + 1) < cb.py && !cb.noComm) {
+      double *bufSendBottom = sendBuf + 2 * bufLen;
+      buildSendGhostBuffer(E, bufSendBottom, BOTTOM, m, n);
       MPI_Isend(bufSendBottom, n, MPI_DOUBLE, (rankX + (rankY + 1) * cb.px),
                 BOTTOM, MPI_COMM_WORLD, &sendReq);
-
+    }
     // Send and receive left cells
-    if ((rankX - 1) >= 0 && !cb.noComm)
+    if ((rankX - 1) >= 0 && !cb.noComm) {
+      double *bufSendLeft = sendBuf + 3 * bufLen;
+      buildSendGhostBuffer(E, bufSendLeft, LEFT, m, n);
       MPI_Isend(bufSendLeft, m, MPI_DOUBLE, (rankX - 1 + rankY * cb.px), LEFT,
                 MPI_COMM_WORLD, &sendReq);
-
+    }
     // RECEIVE Ghost Cells
 
     // Receive top cells
-    if ((rankY - 1) >= 0)
+    if ((rankY - 1) >= 0) {
+      double *bufRecvTop = recvBuf;
       MPI_Irecv(bufRecvTop, n, MPI_DOUBLE, (rankX + (rankY - 1) * cb.px),
                 BOTTOM, MPI_COMM_WORLD, &recvReq[0]);
-
+    }
     // Send and receive right cells
-    if ((rankX + 1) < cb.px)
+    if ((rankX + 1) < cb.px) {
+      double *bufRecvRight = recvBuf + bufLen;
       MPI_Irecv(bufRecvRight, m, MPI_DOUBLE, (rankX + 1 + rankY * cb.px), LEFT,
                 MPI_COMM_WORLD, &recvReq[1]);
-
+    }
     // Send and receive bottom cells
-    if ((rankY + 1) < cb.py)
+    if ((rankY + 1) < cb.py) {
+      double *bufRecvBottom = recvBuf + 2 * bufLen;
       MPI_Irecv(bufRecvBottom, n, MPI_DOUBLE, (rankX + (rankY + 1) * cb.px),
                 TOP, MPI_COMM_WORLD, &recvReq[2]);
-
+    }
     // Send and receive left cells
-    if ((rankX - 1) >= 0)
+    if ((rankX - 1) >= 0) {
+      double *bufRecvLeft = recvBuf + 3 * bufLen;
       MPI_Irecv(bufRecvLeft, m, MPI_DOUBLE, (rankX - 1 + rankY * cb.px), RIGHT,
                 MPI_COMM_WORLD, &recvReq[3]);
+    }
   }
 }
 
@@ -817,7 +815,7 @@ void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
   if (idxCompute == 0) {
     // Top edge computation
     fillGhostCells(E_prev_rank, ghostCellRecvBuf, TOP, stride_rankY,
-                   stride_rankX,valid);
+                   stride_rankX, valid);
 
     startIdx = innerBlockRowStartIndex - (stride_rankX + 2);
     endIdx = innerBlockRowStartIndex - (stride_rankX + 2) + strideComp - 1;
@@ -831,7 +829,7 @@ void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
     // Left edge computation
     //
     fillGhostCells(E_prev_rank, ghostCellRecvBuf + 3 * ghostBufLen, LEFT,
-                   stride_rankY, stride_rankX,valid);
+                   stride_rankY, stride_rankX, valid);
     startIdx = innerBlockRowStartIndex - 1;
     endIdx = innerBlockRowEndIndex - strideComp;
     stride = 1;
@@ -843,7 +841,7 @@ void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
     //  Right edge computation
 
     fillGhostCells(E_prev_rank, ghostCellRecvBuf + ghostBufLen, RIGHT,
-                   stride_rankY, stride_rankX,valid);
+                   stride_rankY, stride_rankX, valid);
     startIdx = innerBlockRowStartIndex + strideComp;
     endIdx = innerBlockRowEndIndex + 1;
     stride = 1;
@@ -855,7 +853,7 @@ void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
   else if (idxCompute == 2) {
     // printf("rank=%d, idxCompute: %d\n", world_rank, idxCompute);
     fillGhostCells(E_prev_rank, ghostCellRecvBuf + 2 * ghostBufLen, BOTTOM,
-                   stride_rankY, stride_rankX,valid);
+                   stride_rankY, stride_rankX, valid);
 
     startIdx = innerBlockRowEndIndex + (stride_rankX + 2) - strideComp + 1;
     endIdx = innerBlockRowEndIndex + 1 + stride_rankX + 2 - 1;
