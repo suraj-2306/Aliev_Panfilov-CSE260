@@ -678,46 +678,96 @@ void solveAlievPanfilovTimeStep(double *E_rank, double *E_prev_rank,
 void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
                         int innerBlockRowStartIndex, int innerBlockRowEndIndex,
                         double alpha, double dt, int stride_rankX,
-                        int stride_rankY, int strideComp) {
+                        int stride_rankY, int strideComp)
+{
   double *E_tmp, *E_prev_tmp, *R_tmp;
   int i, j;
-  //
+  __m128d vec_alpha = _mm_set1_pd(alpha);
+  __m128d vec_4f = _mm_set1_pd(-4.0f);
+  __m128d vec_1f = _mm_set1_pd(1.0f);
+  __m128d vec_neg1f = _mm_set1_pd(-1.0f);
+  __m128d vec_a = _mm_set1_pd(a);
+  __m128d vec_b = _mm_set1_pd(b);
+  __m128d vec_dt = _mm_set1_pd(dt);
+  __m128d vec_kk = _mm_set1_pd(kk);
+  __m128d vec_eps = _mm_set1_pd(epsilon);
+  __m128d vec_M1 = _mm_set1_pd(M1);
+  __m128d vec_M2 = _mm_set1_pd(M2);
+
 #ifdef FUSED
 
-  // printf("rank%d,innerStart=%d, innerEnd=%d,strideComp=%d\n", world_rank,
-  //        innerBlockRowStartIndex, innerBlockRowEndIndex, strideComp);
   // Solve for the excitation, a PDE
-  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
-       j += (stride_rankX + 2)) {
+  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (stride_rankX + 2))
+  {
     E_tmp = E_rank + j;
     E_prev_tmp = E_prev_rank + j;
     R_tmp = R_rank + j;
-    for (i = 0; i < strideComp; i++) {
-      E_tmp[i] =
-          E_prev_tmp[i] +
-          alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] +
-                   E_prev_tmp[i + (stride_rankX + 2)] +
-                   E_prev_tmp[i - (stride_rankX + 2)]);
-      E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) *
-                             (E_prev_tmp[i] - 1) +
-                         E_prev_tmp[i] * R_tmp[i]);
-      R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) *
-                  (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+    for (i = 0; i < strideComp - 2; i += 2)
+    {
+
+      __m128d vec_center = _mm_loadu_pd(&E_prev_tmp[i]);
+      __m128d vec_north = _mm_loadu_pd(&E_prev_tmp[i - (stride_rankX + 2)]);
+      __m128d vec_east = _mm_loadu_pd(&E_prev_tmp[i + 1]);
+      __m128d vec_south = _mm_loadu_pd(&E_prev_tmp[i + (stride_rankX + 2)]);
+      __m128d vec_west = _mm_loadu_pd(&E_prev_tmp[i - 1]);
+      __m128d vec_R = _mm_loadu_pd(&R_tmp[i]);
+
+      __m128d vec_4xcenter = _mm_mul_pd(vec_center, vec_4f);
+
+      __m128d vec_res = _mm_add_pd(vec_4xcenter, vec_north);
+      vec_res = _mm_add_pd(vec_res, vec_east);
+      vec_res = _mm_add_pd(vec_res, vec_south);
+      vec_res = _mm_add_pd(vec_res, vec_west);
+      vec_res = _mm_mul_pd(vec_res, vec_alpha);
+      vec_res = _mm_add_pd(vec_res, vec_center);
+
+      __m128d vec_center_less_1 = _mm_sub_pd(vec_center, vec_1f);
+      __m128d vec_center_less_a = _mm_sub_pd(vec_center, vec_a);
+
+      __m128d vec_mula = _mm_mul_pd(vec_kk, vec_center);
+      vec_mula = _mm_mul_pd(vec_mula, vec_center_less_a);
+      vec_mula = _mm_mul_pd(vec_mula, vec_center_less_1);
+
+      vec_mula = _mm_add_pd(vec_mula, _mm_mul_pd(vec_center, vec_R));
+      vec_mula = _mm_mul_pd(vec_mula, vec_dt);
+      vec_res = _mm_sub_pd(vec_res, vec_mula);
+
+      _mm_storeu_pd(&E_tmp[i], vec_res);
+
+      vec_mula = _mm_sub_pd(vec_center_less_1, vec_b);
+      vec_mula = _mm_mul_pd(vec_mula, vec_center);
+      vec_mula = _mm_mul_pd(vec_mula, vec_kk);
+      vec_mula = _mm_sub_pd(_mm_mul_pd(vec_neg1f, vec_R), vec_mula);
+
+      __m128d vec_num = _mm_mul_pd(vec_M1, vec_R);
+      __m128d vec_denom = _mm_add_pd(vec_center, vec_M2);
+      __m128d vec_mulb = _mm_div_pd(vec_num, vec_denom);
+      vec_mulb = _mm_add_pd(vec_eps, vec_mulb);
+      vec_mulb = _mm_mul_pd(vec_mulb, vec_mula);
+      vec_mulb = _mm_mul_pd(vec_dt, vec_mulb);
+      // vec_res = _mm_mul_pd(vec_dt, vec_mulb);
+      vec_res = _mm_add_pd(vec_mulb, vec_R);
+
+      _mm_storeu_pd(&R_tmp[i], vec_res);
+    }
+
+    for (; i < strideComp; i++)
+    {
+      E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (stride_rankX + 2)] + E_prev_tmp[i - (stride_rankX + 2)]);
+      E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
+      R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
     }
   }
 
 #else
   // Solve for the excitation, a PDE
-  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
-       j += (stride_rankX + 2)) {
+  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (stride_rankX + 2))
+  {
     E_tmp = E_rank + j;
     E_prev_tmp = E_prev_rank + j;
-    for (i = 0; i < strideComp; i++) {
-      E_tmp[i] =
-          E_prev_tmp[i] +
-          alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] +
-                   E_prev_tmp[i + (stride_rankX + 2)] +
-                   E_prev_tmp[i - (stride_rankX + 2)]);
+    for (i = 0; i < strideComp; i++)
+    {
+      E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (stride_rankX + 2)] + E_prev_tmp[i - (stride_rankX + 2)]);
     }
   }
 
@@ -726,17 +776,15 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
    *     to the next timtestep
    */
 
-  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
-       j += (stride_rankX + 2)) {
+  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (stride_rankX + 2))
+  {
     E_tmp = E_rank + j;
     E_prev_tmp = E_prev_rank + j;
     R_tmp = R_rank + j;
-    for (i = 0; i < strideComp; i++) {
-      E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) *
-                             (E_prev_tmp[i] - 1) +
-                         E_prev_tmp[i] * R_tmp[i]);
-      R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) *
-                  (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+    for (i = 0; i < strideComp; i++)
+    {
+      E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
+      R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
     }
   }
 #endif
