@@ -6,12 +6,6 @@ policies in effect for this course, as stated in
 	https://sites.google.com/eng.ucsd.edu/cse260-winter-2019/academic-integrity
 
 Signed,
-        Jane Doe (janedoe@ucsd.edu) [YY/MM/DD]
-        John Doe (janedoe@ucsd.edu) [YY/MM/DD]
+        Ashwin Agesh Somanathan (aageshsomanathan@ucsd.edu) [24/06/06]
+        Suraj Sathya Prakash (ssathyaprakash@ucsd.edu) [24/06/06]
 ------------------------------------------------
-Instructions:
-Insert your name(s), email address(s), and date signed.
-Cut everything below the dotted line
-If you do not include this in your assignment turn in, the assignment will
-not be graded, and will be treated as a late assignment
-

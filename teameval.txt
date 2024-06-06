@@ -23,23 +23,40 @@ B: Suraj Sathya Prakash
 (2) Estimate how much time each team member devoted to this project, in HOURS.
 
   	                        A 	       B
-meetings 	  	  	 
-coding 	  	  	 
-writeup 	  	  	 
-planning (alone) 	  	  	 
-total (including meetings) 	  	  	 
+meetings 	  	  	        12          12
+coding 	  	  	            15          15
+writeup 	  	  	        8           8
+planning (alone) 	  	  	10          10 
+total (including meetings) 	50          50 	  	 
 
 
 (3) Discuss the following.
 (a) If you worked in a team, what were the major responsibilities
     of each team member?
+    Both members contributed equally in ideation and code implementation.
+    Both members individually made incremental optimizations based on meetings.
+    Ashwin performed collected performance statistics.
+    Suraj compiled results and prepared a draft of the report.
+    The report was completed and proofed by both members.
 (b) Did you complete the assignment?
+    Assignment completed
 (c) What were your major strengths and weaknesses in doing this
-    assignment (individually or in a team)?
-    If in a team, also discuss how your team worked together.
+    assignment (individually or in a team)? If in a team, also discuss how your team worked together.
+    Strengths: 
+    Both members contibuted equal effort toward the assigment. 
+    Both members were able to work together and individually to identify corner cases and optimization opportunities. The performance achieved would not have been possible working only as individuals.
+    Weaknesses:
+    Both members were inexperienced with profiling tools, leading to long setup times and some guesswork during implementation.
 (d) What  lessons did you learn from these events.
+    Working together on a shared codebase.
+    Clean coding practices.
+    Many lessons about the intricacies and boundary conditions involved in distributed workloads.
+    Differences in dev philosophies between GPU (from PA2) and CPUs.
 (e) If in a team, whether and how you plan to change the way
     your work together .
+    To have a more methodical approach and not skip steps in between in hopes of large gains.
+    Start documentation early and keep building up.
 (f) Anything else that comes to mind.
-
-
+    This assignment was a great lesson in the power of parallel programming.
+    Lots of fun, frustrations and learnings.
+    Some more help with setting up and using perf tools would have been helpful. The massive dump of data is difficult to interpret.
