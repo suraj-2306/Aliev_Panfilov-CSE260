@@ -685,6 +685,8 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
                         int stride_rankY, int strideComp) {
   double *E_tmp, *E_prev_tmp, *R_tmp;
   register double tempE = 0;
+  register double tempE_prev = 0;
+  register double tempR = 0;
   int i, j;
 
 #ifdef SSE_VEC
@@ -776,17 +778,20 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
     E_prev_tmp = E_prev_rank + j;
     R_tmp = R_rank + j;
     for (i = 0; i < strideComp; i++) {
+      tempE_prev = E_prev_tmp[i];
+      tempR = R_tmp[i];
       tempE =
           E_prev_tmp[i] +
-          alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] +
+          alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * tempE_prev +
                    E_prev_tmp[i + (stride_rankX + 2)] +
                    E_prev_tmp[i - (stride_rankX + 2)]);
-      tempE += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) *
-                          (E_prev_tmp[i] - 1) +
-                      E_prev_tmp[i] * R_tmp[i]);
-      R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) *
-                  (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+      tempE += -dt * (kk * tempE_prev * (tempE_prev - a) *
+                          (tempE_prev - 1) +
+                      tempE_prev * tempR);
+      R_tmp[i] += dt * (epsilon + M1 * tempR / (tempE_prev + M2)) *
+                  (-tempR - kk * tempE_prev * (tempE_prev - b - 1));
       E_tmp[i] = tempE;
+      R_tmp[i] = tempR;
     }
   }
 #endif
