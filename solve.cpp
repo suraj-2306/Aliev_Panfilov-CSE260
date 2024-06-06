@@ -120,6 +120,7 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
   int ghostBufLen = MAX(stride_rankX, stride_rankY);
   double *ghostCellSendBuf = new double[4 * ghostBufLen];
   double *ghostCellRecvBuf = new double[4 * ghostBufLen];
+  // register double tempE = 0;
   MPI_Request recvReq[4];
 
   if (world_rank == 0) {
@@ -683,6 +684,7 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
                         double alpha, double dt, int stride_rankX,
                         int stride_rankY, int strideComp) {
   double *E_tmp, *E_prev_tmp, *R_tmp;
+  register double tempE = 0;
   int i, j;
 
 #ifdef SSE_VEC
@@ -772,31 +774,19 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
        j += (stride_rankX + 2)) {
     E_tmp = E_rank + j;
     E_prev_tmp = E_prev_rank + j;
+    R_tmp = R_rank + j;
     for (i = 0; i < strideComp; i++) {
-      E_tmp[i] =
+      tempE =
           E_prev_tmp[i] +
           alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] +
                    E_prev_tmp[i + (stride_rankX + 2)] +
                    E_prev_tmp[i - (stride_rankX + 2)]);
-    }
-  }
-
-  /*
-   * Solve the ODE, advancing excitation and recovery variables
-   *     to the next timtestep
-   */
-
-  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
-       j += (stride_rankX + 2)) {
-    E_tmp = E_rank + j;
-    E_prev_tmp = E_prev_rank + j;
-    R_tmp = R_rank + j;
-    for (i = 0; i < strideComp; i++) {
-      E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) *
-                             (E_prev_tmp[i] - 1) +
-                         E_prev_tmp[i] * R_tmp[i]);
+      tempE += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) *
+                          (E_prev_tmp[i] - 1) +
+                      E_prev_tmp[i] * R_tmp[i]);
       R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) *
                   (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+      E_tmp[i] = tempE;
     }
   }
 #endif
