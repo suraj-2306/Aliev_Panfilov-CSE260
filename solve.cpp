@@ -791,7 +791,6 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
       R_tmp[i] += dt * (epsilon + M1 * tempR / (tempE_prev + M2)) *
                   (-tempR - kk * tempE_prev * (tempE_prev - b - 1));
       E_tmp[i] = tempE;
-      R_tmp[i] = tempR;
     }
   }
 #endif
