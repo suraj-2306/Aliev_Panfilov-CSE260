@@ -226,8 +226,6 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
                      innerBlockRowStartIndex, innerBlockRowEndIndex,
                      strideComp);
 
-#define FUSED 1
-
     // Inner Cell computation
     solveAlievPanfilov(E_rank, E_prev_rank, R_rank, innerBlockRowStartIndex,
                        innerBlockRowEndIndex, alpha, dt, stride_rankX,
@@ -686,6 +684,8 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
                         int stride_rankY, int strideComp) {
   double *E_tmp, *E_prev_tmp, *R_tmp;
   int i, j;
+
+#ifdef SSE_VEC
   __m128d vec_alpha = _mm_set1_pd(alpha);
   __m128d vec_4f = _mm_set1_pd(-4.0f);
   __m128d vec_1f = _mm_set1_pd(1.0f);
@@ -697,8 +697,6 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
   __m128d vec_eps = _mm_set1_pd(epsilon);
   __m128d vec_M1 = _mm_set1_pd(M1);
   __m128d vec_M2 = _mm_set1_pd(M2);
-
-#ifdef FUSED
 
   // Solve for the excitation, a PDE
   for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
