@@ -36,7 +36,7 @@ void printMatRank(const char mesg[], int rank, double *E, int m, int n);
 double *alloc1DAll(int size);
 void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n);
 void buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n);
-void fillGhostCells(double *E, double *buf, int dir, int m, int n);
+void fillGhostCells(double *E, double *buf, int dir, int m, int n, int valid);
 void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen,
                         int rankX, int rankY, int m, int n,
                         MPI_Request *recvReq);
@@ -62,7 +62,7 @@ void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
                             double alpha, double dt, int stride_rankY,
                             int stride_rankX, int innerBlockRowStartIndex,
                             int innerBlockRowEndIndex, int strideComp,
-                            int idxCompute);
+                            int idxCompute, int valid);
 extern control_block cb;
 
 // #ifdef SSE_VEC
@@ -238,25 +238,28 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
     int endIdx;
     int stride;
     int recvCount = 0;
+    int valid = 0;
 
     for (i = 0; i < 4; i++)
       if (recvReq[i] != MPI_REQUEST_NULL) {
         recvCount++;
       } else {
         idxCompute = i;
+        valid = 0;
         solveAlievPanfilovEdge(E_rank, E_prev_rank, R_rank, ghostCellRecvBuf,
                                ghostBufLen, alpha, dt, stride_rankY,
                                stride_rankX, innerBlockRowStartIndex,
-                               innerBlockRowEndIndex, strideComp, i);
+                               innerBlockRowEndIndex, strideComp, i, valid);
       }
 
     while (recvCount--) {
       MPI_Waitany(4, recvReq, &idxCompute, MPI_STATUS_IGNORE);
 
+      valid = 1;
       solveAlievPanfilovEdge(E_rank, E_prev_rank, R_rank, ghostCellRecvBuf,
                              ghostBufLen, alpha, dt, stride_rankY, stride_rankX,
                              innerBlockRowStartIndex, innerBlockRowEndIndex,
-                             strideComp, idxCompute);
+                             strideComp, idxCompute,valid);
     }
     // // Top left corner
     int idx = innerBlockRowStartIndex - 1 - (stride_rankX + 2);
@@ -495,8 +498,8 @@ void buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n) {
   }
 }
 
-void fillGhostCells(double *E, double *buf, int dir, int m, int n) {
-  if (!cb.noComm) {
+void fillGhostCells(double *E, double *buf, int dir, int m, int n, int valid) {
+  if (!cb.noComm || valid) {
     double *E_tmp;
     switch (dir) {
     case TOP:
@@ -682,8 +685,7 @@ void solveAlievPanfilovTimeStep(double *E_rank, double *E_prev_rank,
 void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
                         int innerBlockRowStartIndex, int innerBlockRowEndIndex,
                         double alpha, double dt, int stride_rankX,
-                        int stride_rankY, int strideComp)
-{
+                        int stride_rankY, int strideComp) {
   double *E_tmp, *E_prev_tmp, *R_tmp;
   int i, j;
   __m128d vec_alpha = _mm_set1_pd(alpha);
@@ -701,13 +703,12 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
 #ifdef FUSED
 
   // Solve for the excitation, a PDE
-  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (stride_rankX + 2))
-  {
+  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
+       j += (stride_rankX + 2)) {
     E_tmp = E_rank + j;
     E_prev_tmp = E_prev_rank + j;
     R_tmp = R_rank + j;
-    for (i = 0; i < strideComp - 2; i += 2)
-    {
+    for (i = 0; i < strideComp - 2; i += 2) {
 
       __m128d vec_center = _mm_loadu_pd(&E_prev_tmp[i]);
       __m128d vec_north = _mm_loadu_pd(&E_prev_tmp[i - (stride_rankX + 2)]);
@@ -755,23 +756,32 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
       _mm_storeu_pd(&R_tmp[i], vec_res);
     }
 
-    for (; i < strideComp; i++)
-    {
-      E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (stride_rankX + 2)] + E_prev_tmp[i - (stride_rankX + 2)]);
-      E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
-      R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+    for (; i < strideComp; i++) {
+      E_tmp[i] =
+          E_prev_tmp[i] +
+          alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] +
+                   E_prev_tmp[i + (stride_rankX + 2)] +
+                   E_prev_tmp[i - (stride_rankX + 2)]);
+      E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) *
+                             (E_prev_tmp[i] - 1) +
+                         E_prev_tmp[i] * R_tmp[i]);
+      R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) *
+                  (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
     }
   }
 
 #else
   // Solve for the excitation, a PDE
-  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (stride_rankX + 2))
-  {
+  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
+       j += (stride_rankX + 2)) {
     E_tmp = E_rank + j;
     E_prev_tmp = E_prev_rank + j;
-    for (i = 0; i < strideComp; i++)
-    {
-      E_tmp[i] = E_prev_tmp[i] + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] + E_prev_tmp[i + (stride_rankX + 2)] + E_prev_tmp[i - (stride_rankX + 2)]);
+    for (i = 0; i < strideComp; i++) {
+      E_tmp[i] =
+          E_prev_tmp[i] +
+          alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * E_prev_tmp[i] +
+                   E_prev_tmp[i + (stride_rankX + 2)] +
+                   E_prev_tmp[i - (stride_rankX + 2)]);
     }
   }
 
@@ -780,15 +790,17 @@ void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
    *     to the next timtestep
    */
 
-  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex; j += (stride_rankX + 2))
-  {
+  for (j = innerBlockRowStartIndex; j <= innerBlockRowEndIndex;
+       j += (stride_rankX + 2)) {
     E_tmp = E_rank + j;
     E_prev_tmp = E_prev_rank + j;
     R_tmp = R_rank + j;
-    for (i = 0; i < strideComp; i++)
-    {
-      E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) * (E_prev_tmp[i] - 1) + E_prev_tmp[i] * R_tmp[i]);
-      R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) * (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
+    for (i = 0; i < strideComp; i++) {
+      E_tmp[i] += -dt * (kk * E_prev_tmp[i] * (E_prev_tmp[i] - a) *
+                             (E_prev_tmp[i] - 1) +
+                         E_prev_tmp[i] * R_tmp[i]);
+      R_tmp[i] += dt * (epsilon + M1 * R_tmp[i] / (E_prev_tmp[i] + M2)) *
+                  (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
     }
   }
 #endif
@@ -799,13 +811,13 @@ void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
                             double alpha, double dt, int stride_rankY,
                             int stride_rankX, int innerBlockRowStartIndex,
                             int innerBlockRowEndIndex, int strideComp,
-                            int idxCompute) {
+                            int idxCompute, int valid) {
   int startIdx, endIdx, stride;
 
   if (idxCompute == 0) {
     // Top edge computation
     fillGhostCells(E_prev_rank, ghostCellRecvBuf, TOP, stride_rankY,
-                   stride_rankX);
+                   stride_rankX,valid);
 
     startIdx = innerBlockRowStartIndex - (stride_rankX + 2);
     endIdx = innerBlockRowStartIndex - (stride_rankX + 2) + strideComp - 1;
@@ -819,7 +831,7 @@ void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
     // Left edge computation
     //
     fillGhostCells(E_prev_rank, ghostCellRecvBuf + 3 * ghostBufLen, LEFT,
-                   stride_rankY, stride_rankX);
+                   stride_rankY, stride_rankX,valid);
     startIdx = innerBlockRowStartIndex - 1;
     endIdx = innerBlockRowEndIndex - strideComp;
     stride = 1;
@@ -831,7 +843,7 @@ void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
     //  Right edge computation
 
     fillGhostCells(E_prev_rank, ghostCellRecvBuf + ghostBufLen, RIGHT,
-                   stride_rankY, stride_rankX);
+                   stride_rankY, stride_rankX,valid);
     startIdx = innerBlockRowStartIndex + strideComp;
     endIdx = innerBlockRowEndIndex + 1;
     stride = 1;
@@ -843,7 +855,7 @@ void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
   else if (idxCompute == 2) {
     // printf("rank=%d, idxCompute: %d\n", world_rank, idxCompute);
     fillGhostCells(E_prev_rank, ghostCellRecvBuf + 2 * ghostBufLen, BOTTOM,
-                   stride_rankY, stride_rankX);
+                   stride_rankY, stride_rankX,valid);
 
     startIdx = innerBlockRowEndIndex + (stride_rankX + 2) - strideComp + 1;
     endIdx = innerBlockRowEndIndex + 1 + stride_rankX + 2 - 1;
