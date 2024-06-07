@@ -34,33 +34,39 @@ void printMat2(const char mesg[], double *E, int m, int n);
 void printMatNaive(const char mesg[], double *E, int m, int n);
 void printMatRank(const char mesg[], int rank, double *E, int m, int n);
 double *alloc1DAll(int size);
-inline void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n);
+inline void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m,
+                                     int n);
 inline void buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n);
-inline void fillGhostCells(double *E, double *buf, int dir, int m, int n, int valid);
-inline void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen,
-                               int rankX, int rankY, int m, int n,
+inline void fillGhostCells(double *E, double *buf, int dir, int m, int n,
+                           int valid);
+inline void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf,
+                               int bufLen, int rankX, int rankY, int m, int n,
                                MPI_Request *recvReq);
 inline void calcComputeSpace(int rankX, int rankY, int m, int n, int &startIdx,
                              int &endIdx, int &strideComp);
 
 inline void reshapePackedArray(double *E_prevPacked, double *E_prev,
-                               int *sourceOffsets, int world_size, int smallStrideX,
-                               int smallStrideY, int bigStrideX, int bigStrideY,
+                               int *sourceOffsets, int world_size,
+                               int smallStrideX, int smallStrideY,
+                               int bigStrideX, int bigStrideY,
                                int numSmallRanksX, int numSmallRanksY, int n);
 
-inline void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
-                               int innerBlockRowStartIndex, int innerBlockRowEndIndex,
-                               double alpha, double dt, int stride_rankX,
-                               int stride_rankY, int strideComp);
+inline void solveAlievPanfilov(double *E_rank, double *E_prev_rank,
+                               double *R_rank, int innerBlockRowStartIndex,
+                               int innerBlockRowEndIndex, double alpha,
+                               double dt, int stride_rankX, int stride_rankY,
+                               int strideComp);
 
 inline void solveAlievPanfilovTimeStep(double *E_rank, double *E_prev_rank,
-                                       double *R_rank, int i, double alpha, double dt,
-                                       int stride_rankX, int stride_rankY);
+                                       double *R_rank, int i, double alpha,
+                                       double dt, int stride_rankX,
+                                       int stride_rankY);
 
-inline void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
-                                   double *ghostCellRecvBuf, int ghostBufLen,
-                                   double alpha, double dt, int stride_rankY,
-                                   int stride_rankX, int innerBlockRowStartIndex,
+inline void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank,
+                                   double *R_rank, double *ghostCellRecvBuf,
+                                   int ghostBufLen, double alpha, double dt,
+                                   int stride_rankY, int stride_rankX,
+                                   int innerBlockRowStartIndex,
                                    int innerBlockRowEndIndex, int strideComp,
                                    int idxCompute, int valid);
 extern control_block cb;
@@ -126,8 +132,12 @@ void solve(double **_E, double **_E_prev, double *R, double alpha, double dt,
   if (world_rank == 0) {
     int *sourceOffsetsX = new int[cb.px];
     int *sourceOffsetsY = new int[cb.py];
-    E_prevPacked = (double *)calloc(world_size * (bigStrideX * bigStrideY + bigStrideY * 2), sizeof(double));
-    RPacked = (double *)calloc(world_size * (bigStrideX * bigStrideY + bigStrideY * 2), sizeof(double));
+    E_prevPacked = (double *)calloc(
+        world_size * (bigStrideX * bigStrideY + bigStrideY * 2),
+        sizeof(double));
+    RPacked = (double *)calloc(world_size *
+                                   (bigStrideX * bigStrideY + bigStrideY * 2),
+                               sizeof(double));
     sourceOffsetsX[0] = 0;
     sourceOffsetsY[0] = 0;
     for (i = 1; i < cb.px; i++) {
@@ -404,8 +414,8 @@ double *alloc1DAll(int size) {
   return (E);
 }
 
-inline void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int n)
-{
+inline void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m,
+                                     int n) {
   int i;
   // Top row
   if (rankY == 0) {
@@ -421,8 +431,7 @@ inline void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int
       }
     }
     // Top right corner
-    if (rankX == cb.px - 1)
-    {
+    if (rankX == cb.px - 1) {
       for (i = 2 * (n + 2) - 2; i <= (m + 2) * (n + 2); i += (n + 2)) {
         E[i] = E[i - 2];
       }
@@ -430,8 +439,7 @@ inline void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int
   }
 
   // Bottom row
-  if (rankY == cb.py - 1)
-  {
+  if (rankY == cb.py - 1) {
     for (i = (m * (n + 2)); i < (m + 1) * (n + 2); i++) {
       E[i] = E[i - (n + 2) * 2];
       // E[i] = 456;
@@ -443,8 +451,7 @@ inline void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int
         E[i] = E[i + 2];
       }
     }
-    if (rankX == cb.px - 1)
-    {
+    if (rankX == cb.px - 1) {
       // Right boundary cells
       for (i = 2 * (n + 2) - 2; i <= (m + 2) * (n + 2); i += (n + 2)) {
         E[i] = E[i - 2];
@@ -452,16 +459,14 @@ inline void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int
     }
   }
   // Left edge
-  if (rankX == 0)
-  {
+  if (rankX == 0) {
     // Left boundary cells
     for (i = (n + 2) + 1; i <= (m + 2) * (n + 2); i += (n + 2)) {
       E[i] = E[i + 2];
     }
   }
   // Right edge
-  if (rankX == cb.px - 1)
-  {
+  if (rankX == cb.px - 1) {
     // Right boundary cells
     for (i = 2 * (n + 2) - 2; i <= (m + 2) * (n + 2); i += (n + 2)) {
       E[i] = E[i - 2];
@@ -469,8 +474,8 @@ inline void padPhysicalBoundaryCells(double *E, int rankX, int rankY, int m, int
   }
 }
 
-inline void buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n)
-{
+inline void buildSendGhostBuffer(double *E, double *buf, int dir, int m,
+                                 int n) {
   if (!cb.noComm) {
     double *E_tmp = E + (n + 2) + 1; // move down 1 row and forward 1 column
 
@@ -495,8 +500,8 @@ inline void buildSendGhostBuffer(double *E, double *buf, int dir, int m, int n)
   }
 }
 
-inline void fillGhostCells(double *E, double *buf, int dir, int m, int n, int valid)
-{
+inline void fillGhostCells(double *E, double *buf, int dir, int m, int n,
+                           int valid) {
   if (!cb.noComm || valid) {
     double *E_tmp;
     switch (dir) {
@@ -524,10 +529,9 @@ inline void fillGhostCells(double *E, double *buf, int dir, int m, int n, int va
   }
 }
 
-inline void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int bufLen,
-                               int rankX, int rankY, int m, int n,
-                               MPI_Request *recvReq)
-{
+inline void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf,
+                               int bufLen, int rankX, int rankY, int m, int n,
+                               MPI_Request *recvReq) {
 
   recvReq[0] = MPI_REQUEST_NULL;
   recvReq[1] = MPI_REQUEST_NULL;
@@ -597,8 +601,7 @@ inline void exchangeGhostCells(double *E, double *sendBuf, double *recvBuf, int 
 }
 
 inline void calcComputeSpace(int rankX, int rankY, int m, int n, int &startIdx,
-                             int &endIdx, int &strideComp)
-{
+                             int &endIdx, int &strideComp) {
   int i;
   int startX;
   int startY;
@@ -643,10 +646,10 @@ inline void calcComputeSpace(int rankX, int rankY, int m, int n, int &startIdx,
 }
 
 inline void reshapePackedArray(double *E_prevPacked, double *E_prev,
-                               int *sourceOffsets, int world_size, int smallStrideX,
-                               int smallStrideY, int bigStrideX, int bigStrideY,
-                               int numSmallRanksX, int numSmallRanksY, int n)
-{
+                               int *sourceOffsets, int world_size,
+                               int smallStrideX, int smallStrideY,
+                               int bigStrideX, int bigStrideY,
+                               int numSmallRanksX, int numSmallRanksY, int n) {
   for (int rankIter = 0; rankIter < world_size; rankIter++) {
     int strideX =
         (rankIter % cb.px < numSmallRanksX) ? smallStrideX : bigStrideX;
@@ -663,9 +666,9 @@ inline void reshapePackedArray(double *E_prevPacked, double *E_prev,
   }
 }
 inline void solveAlievPanfilovTimeStep(double *E_rank, double *E_prev_rank,
-                                       double *R_rank, int i, double alpha, double dt,
-                                       int stride_rankX, int stride_rankY)
-{
+                                       double *R_rank, int i, double alpha,
+                                       double dt, int stride_rankX,
+                                       int stride_rankY) {
   double *E_tmp, *E_prev_tmp, *R_tmp;
   E_tmp = E_rank;
   E_prev_tmp = E_prev_rank;
@@ -682,11 +685,11 @@ inline void solveAlievPanfilovTimeStep(double *E_rank, double *E_prev_rank,
               (-R_tmp[i] - kk * E_prev_tmp[i] * (E_prev_tmp[i] - b - 1));
 }
 
-inline void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_rank,
-                               int innerBlockRowStartIndex, int innerBlockRowEndIndex,
-                               double alpha, double dt, int stride_rankX,
-                               int stride_rankY, int strideComp)
-{
+inline void solveAlievPanfilov(double *E_rank, double *E_prev_rank,
+                               double *R_rank, int innerBlockRowStartIndex,
+                               int innerBlockRowEndIndex, double alpha,
+                               double dt, int stride_rankX, int stride_rankY,
+                               int strideComp) {
   double *E_tmp, *E_prev_tmp, *R_tmp;
   register double tempE = 0;
   register double tempE_prev = 0;
@@ -785,22 +788,27 @@ inline void solveAlievPanfilov(double *E_rank, double *E_prev_rank, double *R_ra
       tempE_prev = E_prev_tmp[i];
       tempR = R_tmp[i];
 
-      tempE = tempE_prev + alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * tempE_prev + E_prev_tmp[i + (stride_rankX + 2)] + E_prev_tmp[i - (stride_rankX + 2)]);
-      tempE += -dt * (kk * tempE_prev * (tempE_prev - a) * (tempE_prev - 1) + tempE_prev * tempR);
-      R_tmp[i] += dt * (epsilon + M1 * tempR / (tempE_prev + M2)) * (-tempR - kk * tempE_prev * (tempE_prev - b - 1));
+      tempE = tempE_prev +
+              alpha * (E_prev_tmp[i + 1] + E_prev_tmp[i - 1] - 4 * tempE_prev +
+                       E_prev_tmp[i + (stride_rankX + 2)] +
+                       E_prev_tmp[i - (stride_rankX + 2)]);
+      tempE += -dt * (kk * tempE_prev * (tempE_prev - a) * (tempE_prev - 1) +
+                      tempE_prev * tempR);
+      R_tmp[i] += dt * (epsilon + M1 * tempR / (tempE_prev + M2)) *
+                  (-tempR - kk * tempE_prev * (tempE_prev - b - 1));
       E_tmp[i] = tempE;
     }
   }
 #endif
 }
 
-inline void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank, double *R_rank,
-                                   double *ghostCellRecvBuf, int ghostBufLen,
-                                   double alpha, double dt, int stride_rankY,
-                                   int stride_rankX, int innerBlockRowStartIndex,
+inline void solveAlievPanfilovEdge(double *E_rank, double *E_prev_rank,
+                                   double *R_rank, double *ghostCellRecvBuf,
+                                   int ghostBufLen, double alpha, double dt,
+                                   int stride_rankY, int stride_rankX,
+                                   int innerBlockRowStartIndex,
                                    int innerBlockRowEndIndex, int strideComp,
-                                   int idxCompute, int valid)
-{
+                                   int idxCompute, int valid) {
   int startIdx, endIdx, stride;
 
   if (idxCompute == 0) {
